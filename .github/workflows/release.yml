@@ -1,0 +1,82 @@
+name: Publish desktop clients
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            command: npm run dist:mac -- --arm64 --x64
+            files: release/*.dmg
+          - os: windows-latest
+            command: npm run dist:win -- --x64
+            files: release/*.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Check tag and package version
+        shell: bash
+        run: test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
+      - run: npm ci
+      - run: ${{ matrix.command }}
+        env:
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CERTIFICATE_P12 || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CERTIFICATE_PASSWORD || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.os }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - run: npm run site:manifest
+      - name: Upload installers and switch website manifest
+        env:
+          DEPLOY_HOST: ${{ secrets.CLIENT_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.CLIENT_DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.CLIENT_DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.CLIENT_DEPLOY_KNOWN_HOSTS }}
+          SITE_DIR: ${{ vars.CLIENT_SITE_DIR }}
+          DOWNLOAD_DIR: ${{ vars.CLIENT_DOWNLOAD_DIR }}
+        run: |
+          test -n "$DEPLOY_HOST" && test -n "$DEPLOY_USER" && test -n "$DEPLOY_KEY" && test -n "$DEPLOY_KNOWN_HOSTS"
+          test -n "$SITE_DIR" && test -n "$DOWNLOAD_DIR"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$SITE_DIR' '$DOWNLOAD_DIR'"
+          rsync -av release/*.dmg release/*.exe "$DEPLOY_USER@$DEPLOY_HOST:$DOWNLOAD_DIR/"
+          scp release/latest.json "$DEPLOY_USER@$DEPLOY_HOST:$SITE_DIR/latest.json.next"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "mv '$SITE_DIR/latest.json.next' '$SITE_DIR/latest.json'"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.dmg
+            release/*.exe
+            release/latest.json
+          body_path: release/release-notes.md

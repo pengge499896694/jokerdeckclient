@@ -1,0 +1,54 @@
+{
+  "name": "jokerdeck-switch",
+  "version": "0.3.0",
+  "description": "Jokerdeck desktop launcher for Codex and compatible local tools",
+  "main": "src/main.js",
+  "author": "jokerdeck",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "dist": "electron-builder --mac --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "site:manifest": "node scripts/site-manifest.mjs"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "sharp": "^0.35.5"
+  },
+  "build": {
+    "appId": "net.de5.jokerdeck.switch",
+    "productName": "Jokerdeck Switch",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.png",
+      "artifactName": "jokerdeck-switch-${version}-${arch}.${ext}",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "jokerdeck-switch-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "language": 2052
+    }
+  }
+}

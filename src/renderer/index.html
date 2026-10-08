@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jokerdeck Switch</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <img class="brand-mark" src="../../assets/icon.png" alt="" />
+          <div><strong>jokerdeck</strong><span>Switch</span></div>
+        </div>
+        <div class="header-actions">
+          <button id="update-trigger" class="text-button hidden">发现新版本</button>
+          <div id="account" class="account muted">未登录</div>
+          <button id="logout" class="text-button hidden">退出账号</button>
+        </div>
+      </header>
+      <main>
+        <section id="login-view" class="view login-layout">
+          <div class="welcome">
+            <p class="eyebrow">桌面客户端</p>
+            <h1>把 Codex 配好，<br /><em>一键开始。</em></h1>
+            <p>
+              登录 JokerApi，选择分组，客户端会自动生成密钥、探测线路并写入本地
+              provider 配置。
+            </p>
+            <div class="feature-list">
+              <span><i>01</i> 分组与模型</span><span><i>02</i> 自动线路</span
+              ><span><i>03</i> 一键启动</span>
+            </div>
+          </div>
+          <form id="login-form" class="panel form-panel">
+            <div class="panel-heading">
+              <div class="icon-badge">↗</div>
+              <div>
+                <h2>登录 JokerApi</h2>
+                <p>使用你的中转站账号</p>
+              </div>
+            </div>
+            <label
+              >邮箱<input
+                id="email"
+                type="email"
+                autocomplete="username"
+                required
+                placeholder="you@example.com" /></label
+            ><label
+              >密码<input
+                id="password"
+                type="password"
+                autocomplete="current-password"
+                required
+                placeholder="输入密码" /></label
+            ><label id="totp-label" class="hidden"
+              >动态验证码<input
+                id="totp-code"
+                type="text"
+                inputmode="numeric"
+                maxlength="6"
+                autocomplete="one-time-code"
+                placeholder="6 位验证码" /></label
+            ><label class="remember-choice"><input id="remember-login" type="checkbox" checked />保持登录状态</label
+            ><button class="primary wide" type="submit">
+              登录并读取配置 <span>→</span>
+            </button>
+            <p id="login-error" class="error"></p>
+            <a
+              class="text-link"
+              href="https://jokerdeck.de5.net/register"
+              target="_blank"
+              >还没有账号？去注册</a
+            >
+          </form>
+        </section>
+        <section id="setup-view" class="view hidden">
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">配置中心</p>
+              <h1>选择你的工作分组</h1>
+              <p>选择后会为本机创建专用 API Key，并保存下次启动习惯。</p>
+            </div>
+            <button id="refresh" class="icon-button" title="刷新数据">↻</button>
+          </div>
+          <div class="mode-tabs" role="tablist" aria-label="客户端">
+            <button
+              class="mode-tab active"
+              data-category="openai"
+              role="tab"
+              aria-selected="true"
+            >
+              GPT · Codex
+            </button>
+            <button
+              class="mode-tab"
+              data-category="anthropic"
+              role="tab"
+              aria-selected="false"
+            >
+              Opus · Claude Code
+            </button>
+            <button
+              class="mode-tab"
+              data-category="other"
+              role="tab"
+              aria-selected="false"
+            >
+              其他模型
+            </button>
+          </div>
+          <div class="setup-grid">
+            <div class="panel group-panel">
+              <div class="panel-title">
+                <h2>可用分组</h2>
+                <span id="group-count" class="pill">0</span>
+              </div>
+              <div id="groups" class="group-list"></div>
+              <div id="model-detail" class="model-detail hidden"></div>
+            </div>
+            <aside class="side-stack">
+              <div class="panel endpoint-panel">
+                <div class="panel-title">
+                  <h2>线路</h2>
+                  <span id="health-status" class="status-dot">自动测速</span>
+                </div>
+                <div id="endpoints" class="endpoint-list"></div>
+                <button id="test-endpoints" class="secondary wide">
+                  测速并选择最快线路
+                </button>
+              </div>
+              <div class="panel capability-panel">
+                <div class="panel-title">
+                  <h2>本机检查</h2>
+                  <span class="pill">官方能力</span>
+                </div>
+                <div id="capabilities" class="capability-list"></div>
+              </div>
+            </aside>
+          </div>
+          <div class="bottom-bar">
+            <div id="selection-summary" class="muted">请选择一个分组</div>
+            <button id="launch" class="primary launch-button" disabled>
+              配置并启动 Codex <span>→</span>
+            </button>
+          </div>
+          <p id="setup-error" class="error"></p>
+        </section>
+        <section id="success-view" class="view hidden success-view">
+          <div class="success-mark">✓</div>
+          <p class="eyebrow">已准备就绪</p>
+          <h1>Codex 正在启动</h1>
+          <p id="success-text">本地配置已更新。</p>
+          <button id="launch-again" class="primary">
+            再次启动 Codex <span>→</span></button
+          ><button id="back-to-setup" class="text-button">返回配置</button>
+        </section>
+      </main>
+      <footer>
+        <span>jokerdeck switch · <span id="app-version">v0.3.0</span></span>
+        <div class="footer-actions"><button id="check-update" class="text-button">检查更新</button><button id="site-link" class="text-button">打开中转站</button></div>
+      </footer>
+    </div>
+    <div id="update-dialog" class="dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="update-title">
+      <div class="dialog-panel">
+        <div class="dialog-heading"><h2 id="update-title">版本更新</h2><button id="close-update" class="icon-button" title="关闭">×</button></div>
+        <p id="update-version" class="muted"></p>
+        <div id="update-notes" class="update-notes"></div>
+        <p id="update-status" class="muted"></p>
+        <div class="dialog-actions"><button id="download-update" class="primary">下载并打开安装包</button></div>
+      </div>
+    </div>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
