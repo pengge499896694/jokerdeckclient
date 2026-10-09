@@ -1,6 +1,6 @@
 {
   "name": "jokerdeck-switch",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Jokerdeck desktop launcher for Codex and compatible local tools",
   "main": "src/main.js",
   "author": "jokerdeck",
@@ -8,6 +8,11 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
+    "test": "node --test test/*.test.js",
+    "core:mac": "node scripts/fetch-proxy-core.mjs mac-arm64 mac-x64",
+    "core:win": "node scripts/fetch-proxy-core.mjs win-x64",
+    "predist:mac": "npm run core:mac",
+    "predist:win": "npm run core:win",
     "dist": "electron-builder --mac --win",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win",
@@ -34,8 +39,20 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "assets/icon.png",
-      "signIgnore": ["/Contents/Resources/helpers/"],
-      "extraResources": [{ "from": "vendor/mac", "to": "helpers" }],
+      "signIgnore": [
+        "/Contents/Resources/helpers/"
+      ],
+      "extraResources": [
+        {
+          "from": "vendor/mac",
+          "to": "helpers"
+        },
+        {
+          "from": "vendor/core/mac",
+          "to": "core",
+          "filter": ["**/mihomo"]
+        }
+      ],
       "artifactName": "jokerdeck-switch-${version}-${arch}.${ext}",
       "target": [
         "dmg",
@@ -44,7 +61,17 @@
     },
     "win": {
       "icon": "assets/icon.png",
-      "extraResources": [{ "from": "vendor/win", "to": "helpers" }],
+      "extraResources": [
+        {
+          "from": "vendor/win",
+          "to": "helpers"
+        },
+        {
+          "from": "vendor/core/win",
+          "to": "core",
+          "filter": ["**/mihomo.exe"]
+        }
+      ],
       "target": [
         "nsis"
       ],
@@ -55,5 +82,8 @@
       "allowToChangeInstallationDirectory": true,
       "language": 2052
     }
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
   }
 }

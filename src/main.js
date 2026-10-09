@@ -7,6 +7,9 @@ const { execFile, spawn } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { Readable } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
+const { NodeRuntime } = require("./node-runtime");
+const { normalizeNodePolicy } = require("./node-subscription");
+const { normalizeLocalProxy, proxyServerArgument } = require("./startup-proxy");
 
 const API_ORIGIN = "https://jokerdeck.de5.net/api/v1";
 const SESSION_FILE = () => path.join(app.getPath("userData"), "session.json");
@@ -14,7 +17,29 @@ const UPDATE_URL = "https://jokerdeck.de5.net/client/download/switch-latest.json
 let mainWindow;
 let transientSession = null;
 let computerUseInstallPromise = null;
+let nodeRuntime = null;
 const MCP_NAME = "jokerdeck-computer-use";
+
+function getNodeRuntime() {
+  if (!nodeRuntime) nodeRuntime = new NodeRuntime({
+    root: app.isPackaged ? process.resourcesPath : path.join(__dirname, ".."),
+    packaged: app.isPackaged,
+    userData: app.getPath("userData"),
+  });
+  return nodeRuntime;
+}
+
+async function getNodePolicy(token) {
+  const response = await fetch(`${API_ORIGIN}/client/node-policy`, {
+    headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (response.status === 404) throw new Error("节点策略接口尚未部署，请先更新中转站服务端");
+  if (!response.ok) throw new Error(`节点策略读取失败（${response.status}）`);
+  const body = await response.json();
+  if (body.code && body.code !== 0) throw new Error(body.message || "节点策略读取失败");
+  return normalizeNodePolicy(body.data || body);
+}
 
 function helperRoot() {
   return app.isPackaged
@@ -375,35 +400,13 @@ async function detectCapabilities() {
   const codex = await detectCodex();
   const claude = await detectClaude();
   const home = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-  let configExists = false;
-  let config = "";
-  try {
-    config = await fs.readFile(path.join(home, "config.toml"), "utf8");
-    configExists = true;
-  } catch {}
-  const pluginRoot = path.join(home, "plugins", "cache", "openai-bundled");
-  const pluginNames = ["computer-use", "unified-computer-use"];
-  let installedCount = 0;
-  for (const name of pluginNames) {
-    try {
-      await fs.access(path.join(pluginRoot, name));
-      installedCount++;
-    } catch {}
-  }
-  const enabledCount = pluginNames.filter((name) => {
-    const section = config.match(
-      new RegExp(`\\[plugins\\."${name}@openai-bundled"\\]([^\\[]*)`),
-    );
-    return section && /^enabled\s*=\s*true/m.test(section[1]);
-  }).length;
   return {
     platform: process.platform,
     codex,
     claude,
-    computerUse: { installed: installedCount > 0, enabled: enabledCount > 0 },
     localizationHelper: await fileExists(localizationHelper()),
     computerUseMcp: await fileExists(bundledComputerUseHelper()),
-    configExists,
+    configExists: await fileExists(path.join(home, "config.toml")),
     language: "zh-CN",
   };
 }
@@ -575,19 +578,70 @@ async function readConfiguredClaudeKey() {
   }
 }
 
-function launchCodex() {
-  if (process.platform === "darwin")
-    return spawn("open", ["-a", "ChatGPT"], {
-      detached: true,
-      stdio: "ignore",
-    }).unref();
+async function launchCodex(proxy = "") {
+  const args = proxy ? [proxyServerArgument(proxy)] : [];
+  if (proxy) {
+    const address = normalizeLocalProxy(proxy);
+    const env = {
+      ...process.env,
+      HTTP_PROXY: address,
+      HTTPS_PROXY: address,
+      ALL_PROXY: address,
+      http_proxy: address,
+      https_proxy: address,
+      all_proxy: address,
+    };
+    let executable;
+    if (process.platform === "darwin") {
+      const result = await runDetailed("osascript", ["-e", 'POSIX path of (path to application "ChatGPT")'], 10000);
+      if (!result.ok) throw new Error("找不到 ChatGPT/Codex 应用");
+      executable = path.join(result.output.replace(/\/$/, ""), "Contents", "MacOS", "ChatGPT");
+      if (!(await fileExists(executable))) throw new Error("找不到 Codex 应用主程序");
+    } else if (process.platform === "win32") {
+      executable = path.join(process.env.LOCALAPPDATA || "", "Programs", "Codex", "Codex.exe");
+      if (!(await fileExists(executable))) executable = "codex.exe";
+    } else executable = "codex";
+    await new Promise((resolve, reject) => {
+      const child = spawn(executable, args, { env, detached: true, stdio: "ignore", windowsHide: true });
+      child.once("spawn", () => { child.unref(); resolve(); });
+      child.once("error", reject);
+    });
+    return;
+  }
+  if (process.platform === "darwin") {
+    const result = await runDetailed("open", ["-a", "ChatGPT", ...(args.length ? ["--args", ...args] : [])], 15000);
+    if (!result.ok) throw new Error(result.output || "Codex 启动失败");
+    return;
+  }
   if (process.platform === "win32")
-    return spawn("cmd.exe", ["/c", "start", "", "codex.exe"], {
+    return spawn("cmd.exe", ["/c", "start", "", "codex.exe", ...args], {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
     }).unref();
-  return spawn("codex", [], { detached: true, stdio: "ignore" }).unref();
+  return spawn("codex", args, { detached: true, stdio: "ignore" }).unref();
+}
+
+async function launchProxiedCodex(proxy) {
+  if (await codexIsRunning()) {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: "question",
+      title: "重启 Codex 并连接节点",
+      message: "Codex 正在运行。请保存当前工作，关闭 Codex 后继续以节点重新启动。",
+      buttons: ["取消", "继续"],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    if (response !== 1) return { cancelled: true };
+    if (process.platform === "darwin") {
+      await runDetailed("osascript", ["-e", "tell application \"ChatGPT\" to quit"], 15000);
+      for (let attempt = 0; attempt < 15 && await codexIsRunning(); attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    if (await codexIsRunning()) throw new Error("Codex 尚未完全退出，请关闭后重试");
+  }
+  await launchCodex(proxy);
+  return { started: true, localized: false, warning: "请在 Codex 官方设置中开启 Computer Use；确认可用后可断开节点。" };
 }
 
 async function launchClaude(command) {
@@ -672,6 +726,7 @@ ipcMain.handle("set-login-preference", async (_event, rememberLogin) => {
 });
 ipcMain.handle("logout", async () => {
   const session = await readSession();
+  nodeRuntime?.disconnect();
   await writeSession({
     selectedGroups: session.selectedGroups || {},
     selectedEndpoint: session.selectedEndpoint || null,
@@ -685,12 +740,14 @@ ipcMain.handle("logout", async () => {
   });
   return true;
 });
-ipcMain.handle("set-integrations", async (_event, { tool, localization, computerUse }) => {
+ipcMain.handle("set-integrations", async (_event, { tool, localization, computerUse, officialNetwork }) => {
   const session = await readSession();
   const integrations = {
     localization: typeof localization === "boolean"
       ? localization : session.integrations?.localization !== false,
     computerUse: { ...(session.integrations?.computerUse || {}) },
+    officialNetwork: typeof officialNetwork === "boolean"
+      ? officialNetwork : Boolean(session.integrations?.officialNetwork),
   };
   if (typeof computerUse === "boolean") {
     const target = tool === "claude" ? "claude" : "codex";
@@ -779,11 +836,26 @@ ipcMain.handle("health-check", async (_event, endpoints) =>
   ),
 );
 ipcMain.handle("capabilities", detectCapabilities);
-ipcMain.handle("launch-codex", async (_event, { localized } = {}) => {
+ipcMain.handle("node-status", () => getNodeRuntime().status());
+ipcMain.handle("node-connect", async () => {
+  const session = await validSession();
+  const runtime = getNodeRuntime();
+  runtime.setPolicy(await getNodePolicy(session.token));
+  return runtime.connect();
+});
+ipcMain.handle("node-disconnect", () => getNodeRuntime().disconnect());
+ipcMain.handle("launch-codex", async (_event, { localized, officialNetwork } = {}) => {
   const codex = await detectCodex();
   if (!codex.installed) throw new Error("未检测到 Codex，请先安装官方客户端");
+  if (officialNetwork) {
+    const session = await validSession();
+    const runtime = getNodeRuntime();
+    runtime.setPolicy(await getNodePolicy(session.token));
+    const status = await runtime.connect();
+    return launchProxiedCodex(`127.0.0.1:${status.port}`);
+  }
   if (localized !== false) return launchLocalizedCodex();
-  launchCodex();
+  await launchCodex();
   return { started: true, localized: false };
 });
 ipcMain.handle("launch-claude", async () => {
@@ -823,3 +895,4 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+app.on("before-quit", () => nodeRuntime?.disconnect());

@@ -9,6 +9,7 @@ const state = {
   update: null,
   integrations: { localization: true, computerUse: {} },
   capabilities: null,
+  nodeStatus: { connected: false, port: 0, nodes: 0 },
 };
 const currentTool = () => (state.category === "anthropic" ? "claude" : "codex");
 const currentAppName = () =>
@@ -71,16 +72,8 @@ function renderCapabilities(data) {
         ? `已检测 ${data.claude.version || ""}`
         : "未检测到",
     ],
-    [
-      "官方 Computer Use",
-      data.computerUse.enabled
-        ? "插件已启用 · 官方权限"
-        : data.computerUse.installed
-          ? "已安装 · 需在 Codex 启用"
-          : "未安装插件",
-    ],
     ["中文启动器", data.localizationHelper ? "已内置" : "组件缺失"],
-    ["桌面控制 MCP", data.computerUseMcp ? "已内置" : "组件缺失"],
+    ["本地桌面控制 MCP", data.computerUseMcp ? "已内置" : "组件缺失"],
     ["本地配置", data.configExists ? "已发现 config.toml" : "首次配置"],
   ]
     .map(
@@ -91,6 +84,15 @@ function renderCapabilities(data) {
   $("localization-setting").disabled = !data.localizationHelper;
   $("computer-use-setting").disabled = !data.computerUseMcp;
   $("computer-use-permissions").classList.toggle("hidden", data.platform !== "darwin");
+}
+function renderNodeStatus() {
+  const status = $("node-status");
+  status.classList.toggle("hidden", currentTool() !== "codex");
+  $("node-note").classList.toggle("hidden", currentTool() !== "codex" || !state.integrations.officialNetwork);
+  status.textContent = state.nodeStatus.connected
+    ? `节点已连接 · ${state.nodeStatus.nodes} 个候选 · 本机端口 ${state.nodeStatus.port}`
+    : "节点未连接";
+  $("official-network-setting").checked = Boolean(state.integrations.officialNetwork);
 }
 function updateSummary() {
   $("selection-summary").textContent = state.selectedGroup
@@ -104,6 +106,8 @@ function setCategory(category) {
   state.selectedGroup = state.selectedGroups[category] || null;
   $("integration-status").textContent = "";
   $("localization-option").classList.toggle("hidden", currentTool() !== "codex");
+  $("official-network-option").classList.toggle("hidden", currentTool() !== "codex");
+  renderNodeStatus();
   $("localization-setting").checked = state.integrations.localization !== false;
   $("computer-use-setting").checked = Boolean(state.integrations.computerUse?.[currentTool()]);
   document.querySelectorAll("[data-category]").forEach((button) => {
@@ -135,7 +139,9 @@ async function loadSetup() {
   renderEndpoints();
   updateSummary();
   state.capabilities = await window.jokerdeck.capabilities();
+  state.nodeStatus = await window.jokerdeck.nodeStatus();
   renderCapabilities(state.capabilities);
+  renderNodeStatus();
   show("setup-view");
   chooseFastestEndpoint();
 }
@@ -151,6 +157,29 @@ $("localization-setting").addEventListener("change", async () => {
     $("integration-status").textContent = errorText(error);
   } finally {
     checkbox.disabled = !state.capabilities?.localizationHelper;
+  }
+});
+$("official-network-setting").addEventListener("change", async () => {
+  const checkbox = $("official-network-setting");
+  const enabled = checkbox.checked;
+  checkbox.disabled = true;
+  $("node-status").textContent = enabled ? "正在连接节点…" : "正在断开节点…";
+  try {
+    if (enabled) {
+      state.nodeStatus = await window.jokerdeck.nodeConnect();
+      state.integrations = await window.jokerdeck.setIntegrations({ officialNetwork: true });
+    } else {
+      state.integrations = await window.jokerdeck.setIntegrations({ officialNetwork: false });
+      state.nodeStatus = await window.jokerdeck.nodeDisconnect();
+    }
+  } catch (error) {
+    if (enabled) {
+      try { state.nodeStatus = await window.jokerdeck.nodeDisconnect(); } catch {}
+    }
+    $("integration-status").textContent = errorText(error);
+  } finally {
+    checkbox.disabled = false;
+    renderNodeStatus();
   }
 });
 $("computer-use-setting").addEventListener("change", async () => {
@@ -367,7 +396,10 @@ $("launch").addEventListener("click", async () => {
     });
     const launchResult = tool === "claude"
       ? await window.jokerdeck.launchClaude()
-      : await window.jokerdeck.launchCodex({ localized: state.integrations.localization !== false });
+      : await window.jokerdeck.launchCodex({
+          localized: state.integrations.localization !== false,
+          officialNetwork: Boolean(state.integrations.officialNetwork),
+        });
     if (launchResult?.cancelled) {
       $("setup-error").textContent = "已保存配置；已取消重启 Codex。";
       updateSummary();
@@ -390,7 +422,10 @@ $("launch-again").addEventListener("click", async () => {
   try {
     if (currentTool() === "claude") await window.jokerdeck.launchClaude();
     else {
-      const result = await window.jokerdeck.launchCodex({ localized: state.integrations.localization !== false });
+      const result = await window.jokerdeck.launchCodex({
+        localized: state.integrations.localization !== false,
+        officialNetwork: Boolean(state.integrations.officialNetwork),
+      });
       if (result?.cancelled) $("success-error").textContent = "已取消重启 Codex。";
     }
   } catch (error) {

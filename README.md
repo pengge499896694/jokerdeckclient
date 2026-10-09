@@ -29,3 +29,20 @@ macOS 对外分发建议另设 `MAC_CERTIFICATE_P12`、`MAC_CERTIFICATE_PASSWORD
 中文启动由 [codex-desktop-zh](https://github.com/shibaweidu/codex-desktop-zh) v0.7.7 提供；桌面控制 MCP 由 [QwenLM/open-computer-use](https://github.com/QwenLM/open-computer-use) v0.2.3 提供。两套程序随安装包提供，无需额外安装 npm。macOS 首次启用桌面控制时会将组件复制到 `~/Applications/Jokerdeck Computer Use.app`，以固定路径申请辅助功能与屏幕录制权限；无需启用内核扩展或降低启动安全策略。来源、版本和许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 客户端不会修改系统代理，也不会绕过官方账号、地区、插件或安全授权。独立 MCP 提供的是本机桌面控制工具，不能改变官方 Computer Use 插件的账号权限。
+
+## 官方 Computer Use 节点
+
+客户端的“官方 Computer Use 节点”开关从 HTTPS 订阅读取候选节点，启动独立的本机 Mihomo 代理，只绑定 `127.0.0.1`，通过 Chromium `--proxy-server` 参数重启 Codex。使用者仍需在 Codex 官方设置中开启 Computer Use，并自行确认账号可用。关闭开关只停止本次由客户端启动的代理，不修改系统代理；此时仍在运行的 Codex 若要继续联网，需要以普通模式重新启动。该模式目前使用原版 Codex 界面，不经过中文启动组件。
+
+客户端登录后请求 `GET /api/v1/client/node-policy`，使用现有 Bearer token。服务端接口尚未部署时节点功能不可用。服务端按登录用户返回如下 `data` 对象，超管操作由服务端鉴权并持久化：
+
+```json
+{
+  "enabled": true,
+  "subscription_url": "https://example.org/nodes.yaml",
+  "disabled_nodes": ["US-Slow"],
+  "pinned_node": "US-Fast"
+}
+```
+
+`disabled_nodes` 是全局停用的订阅节点名，`pinned_node` 是当前用户指定节点名，空值表示自动测速。服务端应限制订阅地址的编辑权限，并考虑公共订阅不提供逐用户使用限额，节点配额与稳定性由订阅提供方承担。客户端按节点名称前缀筛选候选地区，节点名不能证明实际出口地区或官方功能资格。

@@ -1,4 +1,5 @@
 node_modules/
 release/
+vendor/core/
 dist/
 .DS_Store
