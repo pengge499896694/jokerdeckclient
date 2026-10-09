@@ -1,6 +1,6 @@
 # 更新记录
 
-## v0.3.1
+## v0.3.2
 
 - 集成 Codex 中文启动器，支持 Windows 与 macOS，并在重启已运行的 Codex 前确认。
 - 集成跨平台桌面控制 MCP，按 Codex/Claude Code 分别启用；macOS 支持系统权限引导。
