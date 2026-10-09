@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, net, safeStorage, shell } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs/promises");
 const { createWriteStream, createReadStream } = require("node:fs");
@@ -20,6 +20,10 @@ let computerUseInstallPromise = null;
 let nodeRuntime = null;
 const MCP_NAME = "jokerdeck-computer-use";
 
+// Electron's network stack follows the desktop proxy and certificate settings;
+// Node's global fetch does not on Windows.
+const networkFetch = (...args) => net.fetch(...args);
+
 function getNodeRuntime() {
   if (!nodeRuntime) nodeRuntime = new NodeRuntime({
     root: app.isPackaged ? process.resourcesPath : path.join(__dirname, ".."),
@@ -30,7 +34,7 @@ function getNodeRuntime() {
 }
 
 async function getNodePolicy(token) {
-  const response = await fetch(`${API_ORIGIN}/client/node-policy`, {
+  const response = await networkFetch(`${API_ORIGIN}/client/node-policy`, {
     headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(10000),
   });
@@ -173,7 +177,7 @@ function compareVersions(left, right) {
 }
 
 async function checkUpdate() {
-  const response = await fetch(UPDATE_URL, { cache: "no-store", signal: AbortSignal.timeout(12000) });
+  const response = await networkFetch(UPDATE_URL, { cache: "no-store", signal: AbortSignal.timeout(12000) });
   if (!response.ok) throw new Error(`更新服务暂不可用（${response.status}）`);
   const manifest = await response.json();
   if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) throw new Error("更新版本信息无效");
@@ -204,7 +208,7 @@ async function downloadUpdate() {
   await fs.mkdir(updateDirectory, { recursive: true });
   const destination = path.join(updateDirectory, filename);
   const partial = `${destination}.part`;
-  const response = await fetch(update.url, { signal: AbortSignal.timeout(300000) });
+  const response = await networkFetch(update.url, { signal: AbortSignal.timeout(300000) });
   if (!response.ok || !response.body) throw new Error(`安装包下载失败（${response.status}）`);
   let received = 0;
   const progress = new (require("node:stream").Transform)({
@@ -236,7 +240,7 @@ async function api(pathname, options = {}, token) {
     ...(options.headers || {}),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`${API_ORIGIN}${pathname}`, {
+  const response = await networkFetch(`${API_ORIGIN}${pathname}`, {
     ...options,
     headers,
     signal: AbortSignal.timeout(options.timeout || 15000),
@@ -819,7 +823,7 @@ ipcMain.handle("health-check", async (_event, endpoints) =>
     endpoints.map(async (entry) => {
       const started = Date.now();
       try {
-        const response = await fetch(entry.endpoint, {
+        const response = await networkFetch(entry.endpoint, {
           method: "GET",
           signal: AbortSignal.timeout(6500),
         });
