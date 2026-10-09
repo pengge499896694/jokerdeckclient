@@ -32,6 +32,25 @@ function windowsCodexCandidates(env = process.env) {
   ]);
 }
 
+function windowsCodexAppCandidates(env = process.env) {
+  const join = path.win32.join;
+  const localAppData = env.LOCALAPPDATA || "";
+  const programFiles = env.ProgramW6432 || env.ProgramFiles || "";
+  const programFilesX86 = env["ProgramFiles(x86)"] || "";
+  return unique([
+    join(localAppData, "Programs", "OpenAI", "Codex", "Codex.exe"),
+    join(localAppData, "Programs", "Codex", "Codex.exe"),
+    join(localAppData, "Programs", "ChatGPT", "ChatGPT.exe"),
+    join(localAppData, "ChatGPT", "ChatGPT.exe"),
+    join(programFiles, "OpenAI", "Codex", "Codex.exe"),
+    join(programFiles, "Codex", "Codex.exe"),
+    join(programFiles, "ChatGPT", "ChatGPT.exe"),
+    join(programFilesX86, "OpenAI", "Codex", "Codex.exe"),
+    join(programFilesX86, "Codex", "Codex.exe"),
+    join(programFilesX86, "ChatGPT", "ChatGPT.exe"),
+  ]);
+}
+
 function parseWindowsCommandPaths(output) {
   return unique(
     String(output || "")
@@ -57,5 +76,6 @@ module.exports = {
   parseWindowsAppPath,
   parseWindowsCommandPaths,
   unique,
+  windowsCodexAppCandidates,
   windowsCodexCandidates,
 };

@@ -14,6 +14,7 @@ const {
   parseWindowsAppPath,
   parseWindowsCommandPaths,
   unique,
+  windowsCodexAppCandidates,
   windowsCodexCandidates,
 } = require("./codex-detection");
 
@@ -613,8 +614,13 @@ async function launchCodex(proxy = "") {
       executable = path.join(result.output.replace(/\/$/, ""), "Contents", "MacOS", "ChatGPT");
       if (!(await fileExists(executable))) throw new Error("找不到 Codex 应用主程序");
     } else if (process.platform === "win32") {
-      executable = path.join(process.env.LOCALAPPDATA || "", "Programs", "Codex", "Codex.exe");
-      if (!(await fileExists(executable))) executable = "codex.exe";
+      executable = "codex.exe";
+      for (const candidate of windowsCodexAppCandidates(process.env)) {
+        if (await fileExists(candidate)) {
+          executable = candidate;
+          break;
+        }
+      }
     } else executable = "codex";
     await new Promise((resolve, reject) => {
       const child = spawn(executable, args, { env, detached: true, stdio: "ignore", windowsHide: true });
@@ -628,12 +634,20 @@ async function launchCodex(proxy = "") {
     if (!result.ok) throw new Error(result.output || "Codex 启动失败");
     return;
   }
-  if (process.platform === "win32")
-    return spawn("cmd.exe", ["/c", "start", "", "codex.exe", ...args], {
+  if (process.platform === "win32") {
+    let executable = "codex.exe";
+    for (const candidate of windowsCodexAppCandidates(process.env)) {
+      if (await fileExists(candidate)) {
+        executable = candidate;
+        break;
+      }
+    }
+    return spawn("cmd.exe", ["/c", "start", "", executable, ...args], {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
     }).unref();
+  }
   return spawn("codex", args, { detached: true, stdio: "ignore" }).unref();
 }
 

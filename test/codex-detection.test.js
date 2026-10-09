@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   parseWindowsAppPath,
   parseWindowsCommandPaths,
+  windowsCodexAppCandidates,
   windowsCodexCandidates,
 } = require("../src/codex-detection");
 
@@ -16,6 +17,16 @@ test("includes the official standalone Windows Codex CLI path", () => {
   });
   assert.ok(candidates.includes("C:\\Users\\alice\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe"));
   assert.ok(candidates.includes("C:\\Users\\alice\\AppData\\Roaming\\npm\\codex.cmd"));
+});
+
+test("includes desktop application paths for proxied Windows launches", () => {
+  const candidates = windowsCodexAppCandidates({
+    LOCALAPPDATA: "C:\\Users\\alice\\AppData\\Local",
+    ProgramFiles: "C:\\Program Files",
+    "ProgramFiles(x86)": "C:\\Program Files (x86)",
+  });
+  assert.ok(candidates.includes("C:\\Users\\alice\\AppData\\Local\\Programs\\OpenAI\\Codex\\Codex.exe"));
+  assert.ok(candidates.includes("C:\\Users\\alice\\AppData\\Local\\Programs\\ChatGPT\\ChatGPT.exe"));
 });
 
 test("parses where.exe and App Paths output", () => {
