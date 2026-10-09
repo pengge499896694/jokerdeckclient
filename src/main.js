@@ -10,9 +10,10 @@ const { pipeline } = require("node:stream/promises");
 
 const API_ORIGIN = "https://jokerdeck.de5.net/api/v1";
 const SESSION_FILE = () => path.join(app.getPath("userData"), "session.json");
-const UPDATE_URL = "https://jokerdeck.de5.net/client-site/switch-latest.json";
+const UPDATE_URL = "https://jokerdeck.de5.net/client/download/switch-latest.json";
 let mainWindow;
 let transientSession = null;
+let computerUseInstallPromise = null;
 const MCP_NAME = "jokerdeck-computer-use";
 
 function helperRoot() {
@@ -32,10 +33,52 @@ function localizationHelper() {
   );
 }
 
-function computerUseHelper() {
+function bundledComputerUseHelper() {
   return process.platform === "win32"
     ? path.join(helperRoot(), "open-computer-use.exe")
     : path.join(helperRoot(), "Open Computer Use.app", "Contents", "MacOS", "OpenComputerUse");
+}
+
+async function computerUseHelper() {
+  const sourceExecutable = bundledComputerUseHelper();
+  if (process.platform !== "darwin") return sourceExecutable;
+  if (!computerUseInstallPromise) {
+    computerUseInstallPromise = (async () => {
+      if (!(await fileExists(sourceExecutable)))
+        throw new Error("桌面控制组件缺失，请重新安装客户端");
+      const targetApp = path.join(os.homedir(), "Applications", "Jokerdeck Computer Use.app");
+      const targetExecutable = path.join(targetApp, "Contents", "MacOS", "OpenComputerUse");
+      const digest = (buffer) => createHash("sha256").update(buffer).digest("hex");
+      if (await fileExists(targetExecutable)) {
+        const [source, installed] = await Promise.all([
+          fs.readFile(sourceExecutable), fs.readFile(targetExecutable),
+        ]);
+        if (digest(source) === digest(installed)) return targetExecutable;
+      }
+      const stagedApp = path.join(os.homedir(), "Applications", "Jokerdeck Computer Use.next.app");
+      const backupApp = path.join(os.homedir(), "Applications", `Jokerdeck Computer Use.${Date.now()}.backup.app`);
+      await fs.mkdir(path.dirname(targetApp), { recursive: true });
+      await fs.rm(stagedApp, { recursive: true, force: true });
+      const copied = await runDetailed("ditto", [path.dirname(path.dirname(path.dirname(sourceExecutable))), stagedApp], 120000);
+      if (!copied.ok) throw new Error(copied.output || "桌面控制组件安装失败");
+      const verified = await runDetailed("codesign", ["--verify", "--deep", "--strict", stagedApp]);
+      if (!verified.ok) throw new Error("桌面控制组件签名校验失败");
+      const previousExists = await fileExists(targetApp);
+      if (previousExists) await fs.rename(targetApp, backupApp);
+      try {
+        await fs.rename(stagedApp, targetApp);
+      } catch (error) {
+        if (previousExists) await fs.rename(backupApp, targetApp);
+        throw error;
+      }
+      if (previousExists) await fs.rm(backupApp, { recursive: true, force: true });
+      return targetExecutable;
+    })().catch((error) => {
+      computerUseInstallPromise = null;
+      throw error;
+    });
+  }
+  return computerUseInstallPromise;
 }
 
 async function fileExists(filename) {
@@ -359,14 +402,14 @@ async function detectCapabilities() {
     claude,
     computerUse: { installed: installedCount > 0, enabled: enabledCount > 0 },
     localizationHelper: await fileExists(localizationHelper()),
-    computerUseMcp: await fileExists(computerUseHelper()),
+    computerUseMcp: await fileExists(bundledComputerUseHelper()),
     configExists,
     language: "zh-CN",
   };
 }
 
 async function configureComputerUse(tool, enabled) {
-  const executable = computerUseHelper();
+  const executable = enabled ? await computerUseHelper() : bundledComputerUseHelper();
   if (enabled && !(await fileExists(executable)))
     throw new Error("桌面控制组件缺失，请重新安装客户端");
   if (tool === "claude") {
@@ -394,6 +437,7 @@ async function configureComputerUse(tool, enabled) {
   }
   const codex = await detectCodex();
   if (!codex.installed) throw new Error("未检测到 Codex，无法配置桌面控制 MCP");
+  await fs.mkdir(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), { recursive: true });
   const current = await runDetailed(codex.command, ["mcp", "get", MCP_NAME, "--json"]);
   if (!enabled && !current.ok) return;
   const args = enabled
@@ -658,7 +702,7 @@ ipcMain.handle("set-integrations", async (_event, { tool, localization, computer
 });
 ipcMain.handle("computer-use-permissions", async () => {
   if (process.platform !== "darwin") return false;
-  const executable = computerUseHelper();
+  const executable = await computerUseHelper();
   if (!(await fileExists(executable))) throw new Error("桌面控制组件缺失");
   return new Promise((resolve, reject) => {
     const child = spawn(executable, ["doctor"], { detached: true, stdio: "ignore" });

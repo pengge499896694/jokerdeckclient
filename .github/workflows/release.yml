@@ -98,8 +98,8 @@ jobs:
           rsync -av release/*.dmg release/*.exe "$DEPLOY_USER@$DEPLOY_HOST:$DOWNLOAD_DIR/"
           scp site/index.html "$DEPLOY_USER@$DEPLOY_HOST:$SITE_DIR/index.html.next"
           scp assets/icon.png "$DEPLOY_USER@$DEPLOY_HOST:$SITE_DIR/icon.png.next"
-          scp release/latest.json "$DEPLOY_USER@$DEPLOY_HOST:$SITE_DIR/switch-latest.json.next"
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" "mv '$SITE_DIR/icon.png.next' '$SITE_DIR/icon.png' && mv '$SITE_DIR/index.html.next' '$SITE_DIR/index.html' && mv '$SITE_DIR/switch-latest.json.next' '$SITE_DIR/switch-latest.json'"
+          scp release/latest.json "$DEPLOY_USER@$DEPLOY_HOST:$DOWNLOAD_DIR/switch-latest.json.next"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "mv '$SITE_DIR/icon.png.next' '$SITE_DIR/icon.png' && mv '$SITE_DIR/index.html.next' '$SITE_DIR/index.html' && mv '$DOWNLOAD_DIR/switch-latest.json.next' '$DOWNLOAD_DIR/switch-latest.json'"
       - uses: softprops/action-gh-release@v2
         with:
           files: |

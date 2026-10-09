@@ -79,7 +79,7 @@
       const version = document.getElementById("version");
       const changes = document.getElementById("changes");
       try {
-        const response = await fetch("/client-site/switch-latest.json", { cache: "no-store" });
+        const response = await fetch("/client/download/switch-latest.json", { cache: "no-store" });
         if (!response.ok) throw new Error("清单暂不可用");
         const manifest = await response.json();
         if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) throw new Error("版本信息无效");
