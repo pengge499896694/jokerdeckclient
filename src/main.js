@@ -10,6 +10,12 @@ const { pipeline } = require("node:stream/promises");
 const { NodeRuntime } = require("./node-runtime");
 const { normalizeNodePolicy } = require("./node-subscription");
 const { normalizeLocalProxy, proxyServerArgument } = require("./startup-proxy");
+const {
+  parseWindowsAppPath,
+  parseWindowsCommandPaths,
+  unique,
+  windowsCodexCandidates,
+} = require("./codex-detection");
 
 const API_ORIGIN = "https://jokerdeck.de5.net/api/v1";
 const SESSION_FILE = () => path.join(app.getPath("userData"), "session.json");
@@ -342,21 +348,26 @@ function runDetailed(command, args, timeout = 15000) {
 }
 
 async function detectCodex() {
-  const candidates =
-    process.platform === "win32"
-      ? [
-          "codex.exe",
-          path.join(
-            process.env.LOCALAPPDATA || "",
-            "Programs",
-            "Codex",
-            "Codex.exe",
-          ),
-        ]
-      : [
-          "codex",
-          "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
-        ];
+  let candidates;
+  if (process.platform === "win32") {
+    const discovered = [];
+    const where = await runDetailed("where.exe", ["codex.exe"]);
+    discovered.push(...parseWindowsCommandPaths(where.output));
+    for (const key of [
+      "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\codex.exe",
+      "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\codex.exe",
+      "HKLM\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\App Paths\\codex.exe",
+    ]) {
+      const registry = await runDetailed("reg.exe", ["query", key, "/ve"]);
+      discovered.push(...parseWindowsAppPath(registry.output));
+    }
+    candidates = unique([...discovered, ...windowsCodexCandidates(process.env)]);
+  } else {
+    candidates = [
+      "codex",
+      "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+    ];
+  }
   for (const candidate of candidates) {
     const result =
       process.platform === "win32"
