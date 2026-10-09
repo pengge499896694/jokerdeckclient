@@ -28,6 +28,7 @@ jobs:
       - name: Build installers
         shell: bash
         run: |
+          sign_args=()
           if [[ -n "$MAC_P12" ]]; then
             export CSC_LINK="$MAC_P12"
             export CSC_KEY_PASSWORD="$MAC_PASSWORD"
@@ -36,8 +37,20 @@ jobs:
             export APPLE_TEAM_ID="$MAC_TEAM_ID"
           else
             export CSC_IDENTITY_AUTO_DISCOVERY=false
+            if [[ "$RUNNER_OS" == "macOS" ]]; then
+              sign_args=(-c.mac.identity=- -c.mac.hardenedRuntime=false)
+            fi
           fi
-          ${{ matrix.command }}
+          ${{ matrix.command }} "${sign_args[@]}"
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            shopt -s nullglob
+            apps=(release/mac*/Jokerdeck\ Switch.app)
+            test "${#apps[@]}" -eq 2
+            for app in "${apps[@]}"; do
+              codesign --verify --deep --strict "$app"
+              codesign --verify --strict "$app/Contents/Resources/helpers/Open Computer Use.app"
+            done
+          fi
         env:
           MAC_P12: ${{ secrets.MAC_CERTIFICATE_P12 }}
           MAC_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
@@ -85,8 +98,8 @@ jobs:
           rsync -av release/*.dmg release/*.exe "$DEPLOY_USER@$DEPLOY_HOST:$DOWNLOAD_DIR/"
           scp site/index.html "$DEPLOY_USER@$DEPLOY_HOST:$SITE_DIR/index.html.next"
           scp assets/icon.png "$DEPLOY_USER@$DEPLOY_HOST:$SITE_DIR/icon.png.next"
-          scp release/latest.json "$DEPLOY_USER@$DEPLOY_HOST:$SITE_DIR/latest.json.next"
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" "mv '$SITE_DIR/icon.png.next' '$SITE_DIR/icon.png' && mv '$SITE_DIR/index.html.next' '$SITE_DIR/index.html' && mv '$SITE_DIR/latest.json.next' '$SITE_DIR/latest.json'"
+          scp release/latest.json "$DEPLOY_USER@$DEPLOY_HOST:$SITE_DIR/switch-latest.json.next"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "mv '$SITE_DIR/icon.png.next' '$SITE_DIR/icon.png' && mv '$SITE_DIR/index.html.next' '$SITE_DIR/index.html' && mv '$SITE_DIR/switch-latest.json.next' '$SITE_DIR/switch-latest.json'"
       - uses: softprops/action-gh-release@v2
         with:
           files: |

@@ -1,6 +1,6 @@
 {
   "name": "jokerdeck-switch",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Jokerdeck desktop launcher for Codex and compatible local tools",
   "main": "src/main.js",
   "author": "jokerdeck",
@@ -34,6 +34,7 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "assets/icon.png",
+      "signIgnore": ["/Contents/Resources/helpers/"],
       "extraResources": [{ "from": "vendor/mac", "to": "helpers" }],
       "artifactName": "jokerdeck-switch-${version}-${arch}.${ext}",
       "target": [

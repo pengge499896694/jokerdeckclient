@@ -69,7 +69,7 @@
         <div class="download"><div><strong>macOS · Apple Silicon</strong><small>M 系列芯片 · DMG</small></div><a id="arm" aria-disabled="true">下载</a></div>
         <div class="download"><div><strong>macOS · Intel</strong><small>x86_64 · DMG</small></div><a id="intel" aria-disabled="true">下载</a></div>
       </div>
-      <p class="note">安装包优先由本站提供。当前版本尚未进行 Apple 和 Windows 代码签名。</p>
+      <p class="note">安装包优先由本站提供。macOS 版本使用临时签名、尚未经过 Apple 公证；Windows 版本尚未签名。</p>
     </section>
     <section aria-labelledby="changes-title"><h2 id="changes-title">更新内容</h2><div id="changes" class="changes">正在读取…</div></section>
   </main>
@@ -79,7 +79,7 @@
       const version = document.getElementById("version");
       const changes = document.getElementById("changes");
       try {
-        const response = await fetch("/client-site/latest.json", { cache: "no-store" });
+        const response = await fetch("/client-site/switch-latest.json", { cache: "no-store" });
         if (!response.ok) throw new Error("清单暂不可用");
         const manifest = await response.json();
         if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) throw new Error("版本信息无效");

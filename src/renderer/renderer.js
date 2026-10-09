@@ -176,7 +176,7 @@ $("computer-use-setting").addEventListener("change", async () => {
 $("computer-use-permissions").addEventListener("click", async () => {
   try {
     await window.jokerdeck.computerUsePermissions();
-    $("integration-status").textContent = "请按系统提示授予辅助功能与屏幕录制权限";
+    $("integration-status").textContent = "请允许 Open Computer Use 使用辅助功能与录屏；无需启用内核扩展";
   } catch (error) {
     $("integration-status").textContent = errorText(error);
   }

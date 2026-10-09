@@ -10,7 +10,7 @@ const { pipeline } = require("node:stream/promises");
 
 const API_ORIGIN = "https://jokerdeck.de5.net/api/v1";
 const SESSION_FILE = () => path.join(app.getPath("userData"), "session.json");
-const UPDATE_URL = "https://jokerdeck.de5.net/client-site/latest.json";
+const UPDATE_URL = "https://jokerdeck.de5.net/client-site/switch-latest.json";
 let mainWindow;
 let transientSession = null;
 const MCP_NAME = "jokerdeck-computer-use";
