@@ -38,7 +38,20 @@ for (const target of targets) {
     await writeFile(executable, gunzipSync(bytes));
     await chmod(executable, 0o755);
   } else {
-    const result = spawnSync("tar", ["-xf", archive, "-C", directory], { encoding: "utf8" });
+    let result = spawnSync("tar", ["-xf", archive, "-C", directory], { encoding: "utf8" });
+    if (result.status !== 0 && process.platform === "win32") {
+      const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
+      result = spawnSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `Expand-Archive -LiteralPath ${quote(archive)} -DestinationPath ${quote(directory)} -Force`,
+        ],
+        { encoding: "utf8" },
+      );
+    }
     if (result.status !== 0) throw new Error(result.stderr || "Mihomo extraction failed");
     const extracted = (await readdir(directory)).find((entry) => entry.endsWith(".exe") && entry !== "mihomo.exe");
     if (extracted) await rename(path.join(directory, extracted), executable);
