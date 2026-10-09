@@ -7,6 +7,8 @@ const state = {
   category: "openai",
   selectedGroups: {},
   update: null,
+  integrations: { localization: true, computerUse: {} },
+  capabilities: null,
 };
 const currentTool = () => (state.category === "anthropic" ? "claude" : "codex");
 const currentAppName = () =>
@@ -70,21 +72,25 @@ function renderCapabilities(data) {
         : "未检测到",
     ],
     [
-      "Computer Use",
+      "官方 Computer Use",
       data.computerUse.enabled
-        ? "插件已启用 · 权限由官方控制"
+        ? "插件已启用 · 官方权限"
         : data.computerUse.installed
           ? "已安装 · 需在 Codex 启用"
           : "未安装插件",
     ],
-    ["中文界面", "客户端已启用"],
+    ["中文启动器", data.localizationHelper ? "已内置" : "组件缺失"],
+    ["桌面控制 MCP", data.computerUseMcp ? "已内置" : "组件缺失"],
     ["本地配置", data.configExists ? "已发现 config.toml" : "首次配置"],
   ]
     .map(
       ([label, value]) =>
-        `<div class="capability-row"><span>${label}</span><span class="${value.includes("未") || value.includes("需要") ? "warn" : "good"}">${value}</span></div>`,
+        `<div class="capability-row"><span>${label}</span><span class="${value.includes("未") || value.includes("需要") || value.includes("缺失") ? "warn" : "good"}">${value}</span></div>`,
     )
     .join("");
+  $("localization-setting").disabled = !data.localizationHelper;
+  $("computer-use-setting").disabled = !data.computerUseMcp;
+  $("computer-use-permissions").classList.toggle("hidden", data.platform !== "darwin");
 }
 function updateSummary() {
   $("selection-summary").textContent = state.selectedGroup
@@ -96,6 +102,10 @@ function updateSummary() {
 function setCategory(category) {
   state.category = category;
   state.selectedGroup = state.selectedGroups[category] || null;
+  $("integration-status").textContent = "";
+  $("localization-option").classList.toggle("hidden", currentTool() !== "codex");
+  $("localization-setting").checked = state.integrations.localization !== false;
+  $("computer-use-setting").checked = Boolean(state.integrations.computerUse?.[currentTool()]);
   document.querySelectorAll("[data-category]").forEach((button) => {
     const active = button.dataset.category === category;
     button.classList.toggle("active", active);
@@ -124,10 +134,53 @@ async function loadSetup() {
   setCategory(state.category);
   renderEndpoints();
   updateSummary();
-  renderCapabilities(await window.jokerdeck.capabilities());
+  state.capabilities = await window.jokerdeck.capabilities();
+  renderCapabilities(state.capabilities);
   show("setup-view");
   chooseFastestEndpoint();
 }
+
+$("localization-setting").addEventListener("change", async () => {
+  const checkbox = $("localization-setting");
+  checkbox.disabled = true;
+  try {
+    state.integrations = await window.jokerdeck.setIntegrations({ localization: checkbox.checked });
+    $("integration-status").textContent = "已保存";
+  } catch (error) {
+    checkbox.checked = !checkbox.checked;
+    $("integration-status").textContent = errorText(error);
+  } finally {
+    checkbox.disabled = !state.capabilities?.localizationHelper;
+  }
+});
+$("computer-use-setting").addEventListener("change", async () => {
+  const checkbox = $("computer-use-setting");
+  const tool = currentTool();
+  const enabled = checkbox.checked;
+  checkbox.disabled = true;
+  $("integration-status").textContent = "正在配置 MCP…";
+  try {
+    state.integrations = await window.jokerdeck.setIntegrations({
+      tool,
+      computerUse: enabled,
+    });
+    if (currentTool() === tool)
+      $("integration-status").textContent = enabled ? "MCP 已启用" : "MCP 已关闭";
+  } catch (error) {
+    if (currentTool() === tool) $("integration-status").textContent = errorText(error);
+  } finally {
+    checkbox.checked = Boolean(state.integrations.computerUse?.[currentTool()]);
+    checkbox.disabled = !state.capabilities?.computerUseMcp;
+  }
+});
+$("computer-use-permissions").addEventListener("click", async () => {
+  try {
+    await window.jokerdeck.computerUsePermissions();
+    $("integration-status").textContent = "请按系统提示授予辅助功能与屏幕录制权限";
+  } catch (error) {
+    $("integration-status").textContent = errorText(error);
+  }
+});
 
 async function chooseFastestEndpoint() {
   if (!state.endpoints.length) return;
@@ -312,10 +365,16 @@ $("launch").addEventListener("click", async () => {
       tool,
       apiKey,
     });
-    if (tool === "claude") await window.jokerdeck.launchClaude();
-    else await window.jokerdeck.launchCodex();
+    const launchResult = tool === "claude"
+      ? await window.jokerdeck.launchClaude()
+      : await window.jokerdeck.launchCodex({ localized: state.integrations.localization !== false });
+    if (launchResult?.cancelled) {
+      $("setup-error").textContent = "已保存配置；已取消重启 Codex。";
+      updateSummary();
+      return;
+    }
     $("success-text").textContent =
-      `${state.selectedGroup.name} 已写入本机配置，正在打开 ${currentAppName()}。`;
+      `${state.selectedGroup.name} 已写入本机配置，正在打开 ${currentAppName()}。${launchResult?.warning || ""}`;
     $("success-view").querySelector("h1").textContent =
       `${currentAppName()} 正在启动`;
     $("launch-again").innerHTML = `再次启动 ${currentAppName()} <span>→</span>`;
@@ -326,11 +385,18 @@ $("launch").addEventListener("click", async () => {
     updateSummary();
   }
 });
-$("launch-again").addEventListener("click", () =>
-  currentTool() === "claude"
-    ? window.jokerdeck.launchClaude()
-    : window.jokerdeck.launchCodex(),
-);
+$("launch-again").addEventListener("click", async () => {
+  $("success-error").textContent = "";
+  try {
+    if (currentTool() === "claude") await window.jokerdeck.launchClaude();
+    else {
+      const result = await window.jokerdeck.launchCodex({ localized: state.integrations.localization !== false });
+      if (result?.cancelled) $("success-error").textContent = "已取消重启 Codex。";
+    }
+  } catch (error) {
+    $("success-error").textContent = errorText(error);
+  }
+});
 $("back-to-setup").addEventListener("click", () => show("setup-view"));
 $("site-link").addEventListener("click", () =>
   window.jokerdeck.openUrl("https://jokerdeck.de5.net/dashboard"),
@@ -339,6 +405,7 @@ $("site-link").addEventListener("click", () =>
   $("app-version").textContent = `v${await window.jokerdeck.appVersion()}`;
   openUpdateDialog().catch(() => {});
   const session = await window.jokerdeck.session();
+  state.integrations = session.integrations || { localization: true, computerUse: {} };
   $("remember-login").checked = session.rememberLogin !== false;
   if (session.token) {
     $("account").textContent = session.user?.email || "已登录";

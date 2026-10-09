@@ -1,6 +1,6 @@
 {
   "name": "jokerdeck-switch",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Jokerdeck desktop launcher for Codex and compatible local tools",
   "main": "src/main.js",
   "author": "jokerdeck",
@@ -27,11 +27,14 @@
     "files": [
       "src/**/*",
       "assets/**/*",
+      "vendor/LICENSE-*",
+      "THIRD_PARTY_NOTICES.md",
       "package.json"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "assets/icon.png",
+      "extraResources": [{ "from": "vendor/mac", "to": "helpers" }],
       "artifactName": "jokerdeck-switch-${version}-${arch}.${ext}",
       "target": [
         "dmg",
@@ -40,6 +43,7 @@
     },
     "win": {
       "icon": "assets/icon.png",
+      "extraResources": [{ "from": "vendor/win", "to": "helpers" }],
       "target": [
         "nsis"
       ],

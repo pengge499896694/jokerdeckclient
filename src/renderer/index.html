@@ -134,9 +134,15 @@
               <div class="panel capability-panel">
                 <div class="panel-title">
                   <h2>本机检查</h2>
-                  <span class="pill">官方能力</span>
+                  <span class="pill">组件状态</span>
                 </div>
                 <div id="capabilities" class="capability-list"></div>
+                <div class="integration-options">
+                  <label id="localization-option" class="setting-choice"><span>中文启动 Codex</span><input id="localization-setting" type="checkbox" checked /></label>
+                  <label class="setting-choice"><span>桌面控制 MCP</span><input id="computer-use-setting" type="checkbox" /></label>
+                  <button id="computer-use-permissions" class="secondary wide hidden">检查桌面权限</button>
+                  <p id="integration-status" class="muted integration-status"></p>
+                </div>
               </div>
             </aside>
           </div>
@@ -156,10 +162,11 @@
           <button id="launch-again" class="primary">
             再次启动 Codex <span>→</span></button
           ><button id="back-to-setup" class="text-button">返回配置</button>
+          <p id="success-error" class="error"></p>
         </section>
       </main>
       <footer>
-        <span>jokerdeck switch · <span id="app-version">v0.3.0</span></span>
+        <span>jokerdeck switch · <span id="app-version">v0.3.1</span></span>
         <div class="footer-actions"><button id="check-update" class="text-button">检查更新</button><button id="site-link" class="text-button">打开中转站</button></div>
       </footer>
     </div>

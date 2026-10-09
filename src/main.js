@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, safeStorage, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs/promises");
 const { createWriteStream, createReadStream } = require("node:fs");
@@ -13,6 +13,39 @@ const SESSION_FILE = () => path.join(app.getPath("userData"), "session.json");
 const UPDATE_URL = "https://jokerdeck.de5.net/client-site/latest.json";
 let mainWindow;
 let transientSession = null;
+const MCP_NAME = "jokerdeck-computer-use";
+
+function helperRoot() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "helpers")
+    : path.join(__dirname, "..", "vendor", process.platform === "win32" ? "win" : "mac");
+}
+
+function localizationHelper() {
+  if (process.platform === "win32")
+    return path.join(helperRoot(), "Codex-Zh-Launcher.exe");
+  return path.join(
+    helperRoot(),
+    process.arch === "arm64" ? "arm64" : "x64",
+    "Codex 汉化增强工具.app",
+    "Contents", "MacOS", "CodexZhLauncherMac",
+  );
+}
+
+function computerUseHelper() {
+  return process.platform === "win32"
+    ? path.join(helperRoot(), "open-computer-use.exe")
+    : path.join(helperRoot(), "Open Computer Use.app", "Contents", "MacOS", "OpenComputerUse");
+}
+
+async function fileExists(filename) {
+  try {
+    await fs.access(filename);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function readSession() {
   if (transientSession) return transientSession;
@@ -35,6 +68,7 @@ async function readSession() {
       selectedEndpoint: null,
       setupDone: false,
       rememberLogin: true,
+      integrations: { localization: true, computerUse: {} },
     };
   }
 }
@@ -227,6 +261,14 @@ function run(command, args = []) {
   );
 }
 
+function runDetailed(command, args, timeout = 15000) {
+  return new Promise((resolve) =>
+    execFile(command, args, { timeout, windowsHide: true }, (error, stdout, stderr) =>
+      resolve({ ok: !error, code: error?.code || 0, output: (stdout || stderr || "").trim() }),
+    ),
+  );
+}
+
 async function detectCodex() {
   const candidates =
     process.platform === "win32"
@@ -312,12 +354,91 @@ async function detectCapabilities() {
     return section && /^enabled\s*=\s*true/m.test(section[1]);
   }).length;
   return {
+    platform: process.platform,
     codex,
     claude,
     computerUse: { installed: installedCount > 0, enabled: enabledCount > 0 },
+    localizationHelper: await fileExists(localizationHelper()),
+    computerUseMcp: await fileExists(computerUseHelper()),
     configExists,
     language: "zh-CN",
   };
+}
+
+async function configureComputerUse(tool, enabled) {
+  const executable = computerUseHelper();
+  if (enabled && !(await fileExists(executable)))
+    throw new Error("桌面控制组件缺失，请重新安装客户端");
+  if (tool === "claude") {
+    const configPath = path.join(os.homedir(), ".claude.json");
+    let config = {};
+    try {
+      config = JSON.parse(await fs.readFile(configPath, "utf8"));
+    } catch (error) {
+      if (error.code !== "ENOENT") throw new Error("Claude Code 配置无法读取，请检查 ~/.claude.json");
+    }
+    if (!config || typeof config !== "object" || Array.isArray(config))
+      throw new Error("Claude Code 配置格式无效");
+    if (!enabled && !config.mcpServers?.[MCP_NAME]) return;
+    if (config.mcpServers && (typeof config.mcpServers !== "object" || Array.isArray(config.mcpServers)))
+      throw new Error("Claude Code MCP 配置格式无效");
+    config.mcpServers ||= {};
+    if (enabled)
+      config.mcpServers[MCP_NAME] = { type: "stdio", command: executable, args: ["mcp"] };
+    else delete config.mcpServers[MCP_NAME];
+    if (await fileExists(configPath)) await fs.copyFile(configPath, `${configPath}.jokerdeck.bak`);
+    const temporaryPath = `${configPath}.jokerdeck.tmp`;
+    await fs.writeFile(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+    await fs.rename(temporaryPath, configPath);
+    return;
+  }
+  const codex = await detectCodex();
+  if (!codex.installed) throw new Error("未检测到 Codex，无法配置桌面控制 MCP");
+  const current = await runDetailed(codex.command, ["mcp", "get", MCP_NAME, "--json"]);
+  if (!enabled && !current.ok) return;
+  const args = enabled
+    ? ["mcp", "add", MCP_NAME, "--", executable, "mcp"]
+    : ["mcp", "remove", MCP_NAME];
+  const result = await runDetailed(codex.command, args);
+  if (!result.ok) throw new Error(result.output || "Codex MCP 配置失败");
+}
+
+async function codexIsRunning() {
+  if (process.platform === "darwin") {
+    const [chatgpt, codex] = await Promise.all([
+      run("pgrep", ["-x", "ChatGPT"]),
+      run("pgrep", ["-x", "Codex"]),
+    ]);
+    return chatgpt.ok || codex.ok;
+  }
+  if (process.platform === "win32") {
+    const [codex, chatgpt] = await Promise.all([
+      run("tasklist.exe", ["/NH", "/FI", "IMAGENAME eq Codex.exe"]),
+      run("tasklist.exe", ["/NH", "/FI", "IMAGENAME eq ChatGPT.exe"]),
+    ]);
+    return /^\s*(Codex|ChatGPT)\.exe\s/im.test(`${codex.output}\n${chatgpt.output}`);
+  }
+  return false;
+}
+
+async function launchLocalizedCodex() {
+  const executable = localizationHelper();
+  if (!(await fileExists(executable))) throw new Error("中文启动组件缺失，请重新安装客户端");
+  if (await codexIsRunning()) {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: "question",
+      title: "中文启动 Codex",
+      message: "Codex 正在运行。关闭当前窗口并以中文重新启动？",
+      buttons: ["取消", "关闭并重启"],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    if (response !== 1) return { cancelled: true };
+  }
+  const result = await runDetailed(executable, ["--launch-zh"], 120000);
+  if (!result.ok && result.code !== 2)
+    throw new Error(result.output || "中文启动失败，请检查 Codex 安装状态");
+  return { started: true, localized: result.ok, warning: result.ok ? "" : "Codex 已启动，但中文界面未完全验证" };
 }
 
 async function updateCodexConfig({ endpoint, apiKey }) {
@@ -473,6 +594,7 @@ ipcMain.handle("login", async (_event, credentials) => {
     keyGroupIds: {},
     setupDone: previous.setupDone || false,
     rememberLogin: credentials.rememberLogin !== false,
+    integrations: previous.integrations || { localization: true, computerUse: {} },
   };
   await writeSession(session);
   return { user: session.user, catalog: await getCatalog(session.token) };
@@ -494,6 +616,7 @@ ipcMain.handle("verify-two-factor", async (_event, { tempToken, code }) => {
     keyGroupIds: {},
     setupDone: previous.setupDone || false,
     rememberLogin: previous.pendingRememberLogin !== false,
+    integrations: previous.integrations || { localization: true, computerUse: {} },
   };
   await writeSession(session);
   return { user: session.user };
@@ -514,8 +637,34 @@ ipcMain.handle("logout", async () => {
     user: null,
     rememberLogin: false,
     setupDone: session.setupDone || false,
+    integrations: session.integrations || { localization: true, computerUse: {} },
   });
   return true;
+});
+ipcMain.handle("set-integrations", async (_event, { tool, localization, computerUse }) => {
+  const session = await readSession();
+  const integrations = {
+    localization: typeof localization === "boolean"
+      ? localization : session.integrations?.localization !== false,
+    computerUse: { ...(session.integrations?.computerUse || {}) },
+  };
+  if (typeof computerUse === "boolean") {
+    const target = tool === "claude" ? "claude" : "codex";
+    await configureComputerUse(target, computerUse);
+    integrations.computerUse[target] = computerUse;
+  }
+  await writeSession({ ...session, integrations });
+  return integrations;
+});
+ipcMain.handle("computer-use-permissions", async () => {
+  if (process.platform !== "darwin") return false;
+  const executable = computerUseHelper();
+  if (!(await fileExists(executable))) throw new Error("桌面控制组件缺失");
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, ["doctor"], { detached: true, stdio: "ignore" });
+    child.once("spawn", () => { child.unref(); resolve(true); });
+    child.once("error", reject);
+  });
 });
 ipcMain.handle("catalog", async () => {
   const session = await validSession();
@@ -526,6 +675,7 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
   const endpoint =
     preferences.selectedEndpoint?.endpoint || "https://jokerdeck.de5.net";
   const tool = preferences.tool === "claude" ? "claude" : "codex";
+  if (session.integrations?.computerUse?.[tool]) await configureComputerUse(tool, true);
   if (tool === "claude")
     await updateClaudeConfig({ endpoint, apiKey: preferences.apiKey });
   else await updateCodexConfig({ endpoint, apiKey: preferences.apiKey });
@@ -585,11 +735,12 @@ ipcMain.handle("health-check", async (_event, endpoints) =>
   ),
 );
 ipcMain.handle("capabilities", detectCapabilities);
-ipcMain.handle("launch-codex", async () => {
+ipcMain.handle("launch-codex", async (_event, { localized } = {}) => {
   const codex = await detectCodex();
   if (!codex.installed) throw new Error("未检测到 Codex，请先安装官方客户端");
+  if (localized !== false) return launchLocalizedCodex();
   launchCodex();
-  return true;
+  return { started: true, localized: false };
 });
 ipcMain.handle("launch-claude", async () => {
   const claude = await detectClaude();

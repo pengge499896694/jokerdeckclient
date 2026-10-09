@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7f8">
+  <title>Jokerdeck Switch 下载</title>
+  <style>
+    :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #192b2e; background: #f5f7f8; }
+    * { box-sizing: border-box; }
+    html { scrollbar-width: none; }
+    ::-webkit-scrollbar { display: none; }
+    body { margin: 0; }
+    a { color: inherit; }
+    .wrap { width: min(100% - 40px, 900px); margin: auto; }
+    header { border-bottom: 1px solid #dce4e4; }
+    header .wrap { height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; font-size: 15px; font-weight: 750; }
+    .brand img { width: 30px; height: 30px; }
+    .nav { color: #4e6669; font-size: 13px; text-decoration: none; }
+    .nav:hover, footer a:hover { color: #087d73; }
+    main { padding: 44px 0 64px; }
+    .intro { display: flex; align-items: center; gap: 28px; padding-bottom: 40px; border-bottom: 1px solid #dce4e4; }
+    .app-icon { width: 110px; height: 110px; flex: none; object-fit: contain; }
+    h1 { margin: 0 0 9px; font-size: 35px; line-height: 1.15; font-weight: 760; }
+    .lead { margin: 0; color: #526a6e; font-size: 15px; line-height: 1.65; }
+    .version { margin: 13px 0 0; color: #087d73; font-size: 13px; font-weight: 700; }
+    h2 { margin: 35px 0 15px; font-size: 19px; }
+    .downloads { border-top: 1px solid #dce4e4; }
+    .download { min-height: 77px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 0; border-bottom: 1px solid #dce4e4; }
+    .download strong { display: block; font-size: 15px; }
+    .download small { display: block; color: #64777b; font-size: 12px; margin-top: 4px; }
+    .download a { display: inline-flex; align-items: center; justify-content: center; min-width: 100px; min-height: 36px; padding: 7px 13px; border-radius: 6px; background: #087d73; color: #fff; text-decoration: none; font-size: 13px; font-weight: 650; white-space: nowrap; }
+    .download a:hover { background: #06695f; }
+    .download a[aria-disabled="true"] { background: #a7b2b3; pointer-events: none; }
+    .note { color: #64777b; font-size: 12px; line-height: 1.7; }
+    .changes { color: #344c50; white-space: pre-line; font-size: 13px; line-height: 1.75; }
+    footer { border-top: 1px solid #dce4e4; padding: 24px 0 32px; color: #64777b; font-size: 12px; }
+    footer .wrap { display: flex; justify-content: space-between; gap: 18px; }
+    @media (max-width: 560px) {
+      main { padding-top: 32px; }
+      .intro { gap: 16px; align-items: flex-start; }
+      .app-icon { width: 68px; height: 68px; }
+      h1 { font-size: 25px; }
+      .lead { font-size: 13px; }
+      .download { gap: 12px; }
+      .download a { min-width: 80px; }
+    }
+  </style>
+</head>
+<body>
+  <header><div class="wrap">
+    <a class="brand" href="/client-site/"><img src="/client-site/icon.png" alt="">Jokerdeck Switch</a>
+    <a class="nav" href="https://jokerdeck.de5.net/dashboard">中转站</a>
+  </div></header>
+  <main class="wrap">
+    <section class="intro" aria-labelledby="page-title">
+      <img class="app-icon" src="/client-site/icon.png" alt="Jokerdeck Switch 图标">
+      <div>
+        <h1 id="page-title">Jokerdeck Switch</h1>
+        <p class="lead">登录 JokerApi，选择分组与线路，启动 Codex 或 Claude Code。</p>
+        <p class="version" id="version">正在获取最新版本…</p>
+      </div>
+    </section>
+    <section aria-labelledby="downloads-title">
+      <h2 id="downloads-title">下载客户端</h2>
+      <div class="downloads">
+        <div class="download"><div><strong>Windows</strong><small>64 位 · EXE 安装程序</small></div><a id="windows" aria-disabled="true">下载</a></div>
+        <div class="download"><div><strong>macOS · Apple Silicon</strong><small>M 系列芯片 · DMG</small></div><a id="arm" aria-disabled="true">下载</a></div>
+        <div class="download"><div><strong>macOS · Intel</strong><small>x86_64 · DMG</small></div><a id="intel" aria-disabled="true">下载</a></div>
+      </div>
+      <p class="note">安装包优先由本站提供。当前版本尚未进行 Apple 和 Windows 代码签名。</p>
+    </section>
+    <section aria-labelledby="changes-title"><h2 id="changes-title">更新内容</h2><div id="changes" class="changes">正在读取…</div></section>
+  </main>
+  <footer><div class="wrap"><span>Jokerdeck Switch</span><a href="https://github.com/pengge499896694/jokerdeckclient">GitHub</a></div></footer>
+  <script>
+    (async () => {
+      const version = document.getElementById("version");
+      const changes = document.getElementById("changes");
+      try {
+        const response = await fetch("/client-site/latest.json", { cache: "no-store" });
+        if (!response.ok) throw new Error("清单暂不可用");
+        const manifest = await response.json();
+        if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) throw new Error("版本信息无效");
+        version.textContent = `最新版本 v${manifest.version}`;
+        changes.textContent = manifest.notes || "暂无更新内容";
+        for (const [platform, id] of Object.entries({
+          "windows-x86_64": "windows", "darwin-aarch64": "arm", "darwin-x86_64": "intel"
+        })) {
+          const entry = manifest.platforms?.[platform];
+          const url = typeof entry === "string" ? entry : entry?.url;
+          if (!url) continue;
+          const parsed = new URL(url, location.origin);
+          if (parsed.origin !== location.origin || !parsed.pathname.startsWith("/client/download/")) continue;
+          const link = document.getElementById(id);
+          link.href = parsed.href;
+          link.removeAttribute("aria-disabled");
+        }
+      } catch {
+        version.textContent = "下载服务暂不可用";
+        changes.textContent = "请稍后重试。";
+      }
+    })();
+  </script>
+</body>
+</html>

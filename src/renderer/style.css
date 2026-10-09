@@ -456,6 +456,33 @@ input:focus {
 .capability-row span:last-child {
   font-size: 11px;
 }
+.integration-options {
+  border-top: 1px solid #edf1f1;
+  margin-top: 14px;
+  padding-top: 8px;
+}
+.setting-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+}
+.setting-choice input {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin: 0;
+  accent-color: #0b8177;
+}
+.integration-status {
+  min-height: 15px;
+  margin: 7px 0 0;
+  font-size: 11px;
+}
 .good {
   color: #0b8177;
 }

@@ -71,8 +71,10 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$SITE_DIR' '$DOWNLOAD_DIR'"
           rsync -av release/*.dmg release/*.exe "$DEPLOY_USER@$DEPLOY_HOST:$DOWNLOAD_DIR/"
+          scp site/index.html "$DEPLOY_USER@$DEPLOY_HOST:$SITE_DIR/index.html.next"
+          scp assets/icon.png "$DEPLOY_USER@$DEPLOY_HOST:$SITE_DIR/icon.png.next"
           scp release/latest.json "$DEPLOY_USER@$DEPLOY_HOST:$SITE_DIR/latest.json.next"
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" "mv '$SITE_DIR/latest.json.next' '$SITE_DIR/latest.json'"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "mv '$SITE_DIR/icon.png.next' '$SITE_DIR/icon.png' && mv '$SITE_DIR/index.html.next' '$SITE_DIR/index.html' && mv '$SITE_DIR/latest.json.next' '$SITE_DIR/latest.json'"
       - uses: softprops/action-gh-release@v2
         with:
           files: |
