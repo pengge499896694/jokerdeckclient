@@ -7,7 +7,9 @@ const state = {
   category: "openai",
   selectedGroups: {},
   update: null,
-  integrations: { localization: true, computerUse: {} },
+  integrations: { localization: true, computerUse: { codex: true, claude: false }, officialNetwork: false },
+  useV1: true,
+  configured: { endpoint: "", apiKey: "" },
   capabilities: null,
   nodeStatus: { connected: false, port: 0, nodes: 0, latencies: [] },
 };
@@ -59,6 +61,15 @@ function renderEndpoints() {
         `<div class="endpoint-row ${state.selectedEndpoint?.endpoint === entry.endpoint ? "active" : ""}"><div><strong>${escapeHtml(entry.name)}</strong><small>${escapeHtml(entry.description || entry.endpoint)}</small></div><span class="endpoint-latency">${entry.latency == null ? "待测速" : `${entry.latency} ms`}</span></div>`,
     )
     .join("");
+}
+function renderConfigured() {
+  const configured = state.configured;
+  $("config-panel").classList.toggle("hidden", !configured.endpoint || (currentTool() === "codex" && state.integrations.officialNetwork));
+  $("configured-endpoint").textContent = configured.endpoint || "未配置";
+  const key = configured.apiKey || "";
+  const revealed = $("configured-key").dataset.revealed === "true";
+  $("configured-key").textContent = key ? (revealed ? key : `${key.slice(0, 6)}…${key.slice(-4)}`) : "未配置";
+  $("reveal-key").textContent = key && revealed ? "隐藏" : "显示";
 }
 function renderCapabilities(data) {
   $("capabilities").innerHTML = [
@@ -114,6 +125,7 @@ function setCategory(category) {
   $("integration-status").textContent = "";
   $("localization-option").classList.toggle("hidden", currentTool() !== "codex");
   $("official-network-option").classList.toggle("hidden", currentTool() !== "codex");
+  $("gpt-v1-option").classList.toggle("hidden", currentTool() !== "codex");
   renderNodeStatus();
   $("localization-setting").checked = state.integrations.localization !== false;
   $("computer-use-setting").checked = Boolean(state.integrations.computerUse?.[currentTool()]);
@@ -124,6 +136,7 @@ function setCategory(category) {
   });
   renderGroups();
   updateSummary();
+  renderConfigured();
 }
 function escapeHtml(value) {
   return String(value).replace(
@@ -149,7 +162,20 @@ async function loadSetup() {
   state.nodeStatus = await window.jokerdeck.nodeStatus();
   renderCapabilities(state.capabilities);
   renderNodeStatus();
+  if (state.selectedGroups[state.category] && !(currentTool() === "codex" && state.integrations.officialNetwork)) {
+    const configuredKey = await window.jokerdeck.configuredKey({
+      groupId: state.selectedGroups[state.category].id,
+      tool: currentTool(),
+    });
+    state.configured = {
+      endpoint: currentTool() === "codex"
+        ? `${state.selectedEndpoint?.endpoint || "https://jokerdeck.de5.net"}${state.useV1 ? "/v1" : ""}`
+        : (state.selectedEndpoint?.endpoint || ""),
+      apiKey: configuredKey || "",
+    };
+  }
   show("setup-view");
+  renderConfigured();
   chooseFastestEndpoint();
 }
 
@@ -412,18 +438,22 @@ $("launch").addEventListener("click", async () => {
           groupId: state.selectedGroup.id,
           name: `jokerdeck-client-${state.selectedGroup.id}`,
         });
-        apiKey = key.key || key.api_key || key.token || key.custom_key;
+        apiKey = key?.key || key?.api_key || key?.token || key?.custom_key || key?.data?.key || key?.data?.api_key || key?.data?.token || key?.data?.custom_key;
       }
       if (!apiKey) throw new Error("服务端未返回新密钥，请到 API 密钥页确认");
     }
-    await window.jokerdeck.savePreferences({
+    state.useV1 = $("gpt-v1-routing").checked;
+    const saved = await window.jokerdeck.savePreferences({
       selectedGroup: state.selectedGroup,
       selectedEndpoint: state.selectedEndpoint,
       category: state.category,
       tool,
       apiKey,
       officialNetwork,
+      useV1: state.useV1,
     });
+    state.configured = { endpoint: saved?.endpoint || state.selectedEndpoint?.endpoint || "", apiKey };
+    renderConfigured();
     const launchResult = tool === "claude"
       ? await window.jokerdeck.launchClaude()
       : await window.jokerdeck.launchCodex({
@@ -467,25 +497,50 @@ $("site-link").addEventListener("click", () =>
   window.jokerdeck.openUrl("https://jokerdeck.de5.net/dashboard"),
 );
 (async () => {
-  $("app-version").textContent = `v${await window.jokerdeck.appVersion()}`;
-  openUpdateDialog().catch(() => {});
-  const session = await window.jokerdeck.session();
-  state.integrations = session.integrations || { localization: true, computerUse: {} };
-  $("remember-login").checked = session.rememberLogin !== false;
-  if (session.token) {
-    $("account").textContent = session.user?.email || "已登录";
-    $("logout").classList.remove("hidden");
-    try {
-      state.selectedGroups = session.selectedGroups || {};
-      state.selectedGroup = state.selectedGroups[state.category] || null;
-      await loadSetup();
+  try {
+    $("app-version").textContent = `v${await window.jokerdeck.appVersion()}`;
+    openUpdateDialog().catch(() => {});
+    const session = await window.jokerdeck.session();
+    state.integrations = session.integrations || { localization: true, computerUse: { codex: true, claude: false }, officialNetwork: false };
+    $("remember-login").checked = session.rememberLogin !== false;
+    if (session.token) {
+      $("account").textContent = session.user?.email || "已登录";
+      $("logout").classList.remove("hidden");
+      try {
+        state.selectedGroups = session.selectedGroups || {};
+      state.useV1 = session.useV1 !== false;
+      $("gpt-v1-routing").checked = state.useV1;
       state.selectedEndpoint = session.selectedEndpoint;
-      renderEndpoints();
-      updateSummary();
-    } catch {
-      $("logout").classList.add("hidden");
-      $("account").textContent = "未登录";
-      show("login-view");
+        state.selectedGroup = state.selectedGroups[state.category] || null;
+        await loadSetup();
+        renderEndpoints();
+        updateSummary();
+      } catch {
+        $("logout").classList.add("hidden");
+        $("account").textContent = "未登录";
+        show("login-view");
+      }
     }
+  } catch (error) {
+    $("login-error").textContent = errorText(error);
+  } finally {
+    document.body.classList.remove("booting");
   }
 })();
+
+$("gpt-v1-routing").addEventListener("change", () => {
+  state.useV1 = $("gpt-v1-routing").checked;
+});
+$("reveal-key").addEventListener("click", () => {
+  const node = $("configured-key");
+  node.dataset.revealed = node.dataset.revealed === "true" ? "false" : "true";
+  renderConfigured();
+});
+$("copy-config").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(`endpoint=${state.configured.endpoint || ""}\napi_key=${state.configured.apiKey || ""}`);
+    $("integration-status").textContent = "诊断信息已复制";
+  } catch {
+    $("integration-status").textContent = "复制失败，请检查系统剪贴板权限";
+  }
+});

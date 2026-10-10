@@ -146,7 +146,7 @@ class NodeRuntime {
   async controllerRequest(pathname, options = {}) {
     const response = await this.fetchImpl(`http://127.0.0.1:${this.controllerPort}${pathname}`, {
       ...options,
-      signal: options.signal || AbortSignal.timeout(10000),
+      signal: options.signal || AbortSignal.timeout(5000),
     });
     if (!response.ok) throw new Error(`节点控制器返回 ${response.status}`);
     return response;
@@ -159,8 +159,8 @@ class NodeRuntime {
       const started = Date.now();
       try {
         const response = await this.controllerRequest(
-          `/proxies/${encodeURIComponent(node.name)}/delay?url=${target}&timeout=8000`,
-          { signal: AbortSignal.timeout(10000) },
+          `/proxies/${encodeURIComponent(node.name)}/delay?url=${target}&timeout=3000`,
+          { signal: AbortSignal.timeout(5000) },
         );
         const body = await response.json();
         const delay = Number(body.delay);
@@ -179,7 +179,7 @@ class NodeRuntime {
         body: JSON.stringify({ name: candidate.name }),
       });
       try {
-        await probeOfficialProxy(`127.0.0.1:${proxyPort}`, 5000);
+        await probeOfficialProxy(`127.0.0.1:${proxyPort}`, 3500);
         this.selectedNode = candidate.name;
         this.selectedLatency = candidate.latency;
         return;

@@ -6,7 +6,7 @@
     <title>Jokerdeck Switch</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
-  <body>
+  <body class="booting">
     <div class="app-shell">
       <header class="topbar">
         <div class="brand">
@@ -127,6 +127,7 @@
                   <span id="health-status" class="status-dot">自动测速</span>
                 </div>
                 <div id="endpoints" class="endpoint-list"></div>
+                <label id="gpt-v1-option" class="setting-choice"><span>GPT API 使用 /v1 路由</span><input id="gpt-v1-routing" type="checkbox" checked /></label>
                 <button id="test-endpoints" class="secondary wide">
                   测速并选择最快线路
                 </button>
@@ -148,6 +149,12 @@
                   <button id="computer-use-permissions" class="secondary wide hidden">检查桌面权限</button>
                   <p id="integration-status" class="muted integration-status"></p>
                 </div>
+              </div>
+              <div id="config-panel" class="panel config-panel hidden">
+                <div class="panel-title"><h2>当前配置</h2><span class="pill">排查信息</span></div>
+                <div class="config-detail"><span>请求地址</span><code id="configured-endpoint">未配置</code></div>
+                <div class="config-detail"><span>API Key</span><code id="configured-key">未配置</code><button id="reveal-key" class="text-button" type="button">显示</button></div>
+                <button id="copy-config" class="secondary wide" type="button">复制诊断信息</button>
               </div>
             </aside>
           </div>

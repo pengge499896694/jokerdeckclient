@@ -2,6 +2,14 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const YAML = require("yaml");
 const { subscriptionUrl, normalizeNodePolicy, parseNodes, buildCoreConfig } = require("../src/node-subscription");
+const { normalizeOpenAiEndpoint, extractApiKey } = require("../src/openai-endpoint");
+
+test("normalizes OpenAI endpoint routing and key responses", () => {
+  assert.equal(normalizeOpenAiEndpoint("https://jokerdeck.de5.net"), "https://jokerdeck.de5.net/v1");
+  assert.equal(normalizeOpenAiEndpoint("https://jokerdeck.de5.net/api", false), "https://jokerdeck.de5.net/api");
+  assert.equal(normalizeOpenAiEndpoint("https://jokerdeck.de5.net/v1"), "https://jokerdeck.de5.net/v1");
+  assert.equal(extractApiKey({ data: { api_key: "sk-test" } }), "sk-test");
+});
 
 const sample = YAML.stringify({
   proxies: [

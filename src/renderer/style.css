@@ -21,6 +21,10 @@ body {
   margin: 0;
   min-width: 860px;
 }
+body.booting .view,
+body.booting footer {
+  visibility: hidden;
+}
 .app-shell {
   min-height: 100vh;
   display: flex;
@@ -495,6 +499,29 @@ input:focus {
 .integration-status {
   min-height: 15px;
   margin: 7px 0 0;
+  font-size: 11px;
+}
+.config-panel {
+  padding: 18px 22px;
+}
+.config-detail {
+  display: grid;
+  grid-template-columns: 70px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin: 9px 0;
+  color: #708083;
+  font-size: 11px;
+}
+.config-detail code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #30494c;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.config-detail .text-button {
   font-size: 11px;
 }
 .good {

@@ -10,6 +10,7 @@ const { pipeline } = require("node:stream/promises");
 const { NodeRuntime } = require("./node-runtime");
 const { normalizeNodePolicy } = require("./node-subscription");
 const { normalizeLocalProxy, proxyServerArgument } = require("./startup-proxy");
+const { normalizeOpenAiEndpoint, extractApiKey } = require("./openai-endpoint");
 const {
   parseWindowsAppPath,
   parseWindowsCommandPaths,
@@ -26,6 +27,23 @@ let transientSession = null;
 let computerUseInstallPromise = null;
 let nodeRuntime = null;
 const MCP_NAME = "jokerdeck-computer-use";
+const DEFAULT_INTEGRATIONS = Object.freeze({
+  localization: true,
+  computerUse: { codex: true, claude: false },
+  officialNetwork: false,
+});
+
+function normalizeIntegrations(value = {}) {
+  return {
+    localization: value.localization !== false,
+    computerUse: {
+      codex: value.computerUse?.codex !== false,
+      claude: value.computerUse?.claude === true,
+    },
+    officialNetwork: value.officialNetwork === true,
+  };
+}
+
 
 // Electron's network stack follows the desktop proxy and certificate settings;
 // Node's global fetch does not on Windows.
@@ -90,7 +108,9 @@ async function computerUseHelper() {
         const [source, installed] = await Promise.all([
           fs.readFile(sourceExecutable), fs.readFile(targetExecutable),
         ]);
-        if (digest(source) === digest(installed)) return targetExecutable;
+        if (digest(source) === digest(installed) &&
+          await fileExists(path.join(path.dirname(path.dirname(targetExecutable)), "Resources", "Jokerdeck.icns")))
+          return targetExecutable;
       }
       const stagedApp = path.join(os.homedir(), "Applications", "Jokerdeck Computer Use.next.app");
       const backupApp = path.join(os.homedir(), "Applications", `Jokerdeck Computer Use.${Date.now()}.backup.app`);
@@ -98,6 +118,21 @@ async function computerUseHelper() {
       await fs.rm(stagedApp, { recursive: true, force: true });
       const copied = await runDetailed("ditto", [path.dirname(path.dirname(path.dirname(sourceExecutable))), stagedApp], 120000);
       if (!copied.ok) throw new Error(copied.output || "桌面控制组件安装失败");
+      const iconSource = path.join(__dirname, "..", "assets", "icon.png");
+      const iconset = path.join(app.getPath("userData"), "jokerdeck.iconset");
+      const iconResources = path.join(stagedApp, "Contents", "Resources");
+      await fs.rm(iconset, { recursive: true, force: true });
+      await fs.mkdir(iconset, { recursive: true });
+      for (const size of [16, 32, 128, 256, 512]) {
+        await runDetailed("sips", ["-z", String(size), String(size), iconSource, "--out", path.join(iconset, `icon_${size}x${size}.png`)], 15000);
+        await runDetailed("sips", ["-z", String(size * 2), String(size * 2), iconSource, "--out", path.join(iconset, `icon_${size}x${size}@2x.png`)], 15000);
+      }
+      await runDetailed("iconutil", ["-c", "icns", iconset, "-o", path.join(iconResources, "Jokerdeck.icns")], 30000);
+      await fs.rm(iconset, { recursive: true, force: true });
+      await fs.copyFile(path.join(iconResources, "Jokerdeck.icns"), path.join(iconResources, "OpenComputerUse.icns"));
+      const plist = path.join(stagedApp, "Contents", "Info.plist");
+      await runDetailed("/usr/libexec/PlistBuddy", ["-c", "Set :CFBundleIconFile Jokerdeck.icns", plist], 10000);
+      await runDetailed("codesign", ["--force", "--deep", "--sign", "-", stagedApp], 120000);
       const verified = await runDetailed("codesign", ["--verify", "--deep", "--strict", stagedApp]);
       if (!verified.ok) throw new Error("桌面控制组件签名校验失败");
       const previousExists = await fileExists(targetApp);
@@ -128,7 +163,7 @@ async function fileExists(filename) {
 }
 
 async function readSession() {
-  if (transientSession) return transientSession;
+  if (transientSession) return { ...transientSession, integrations: normalizeIntegrations(transientSession.integrations) };
   try {
     const raw = JSON.parse(await fs.readFile(SESSION_FILE(), "utf8"));
     if (raw.token)
@@ -139,7 +174,7 @@ async function readSession() {
       raw.refreshToken = safeStorage.isEncryptionAvailable()
         ? safeStorage.decryptString(Buffer.from(raw.refreshToken, "base64"))
         : "";
-    return { rememberLogin: true, ...raw };
+    return { rememberLogin: true, ...raw, integrations: normalizeIntegrations(raw.integrations) };
   } catch {
     return {
       token: "",
@@ -148,7 +183,7 @@ async function readSession() {
       selectedEndpoint: null,
       setupDone: false,
       rememberLogin: true,
-      integrations: { localization: true, computerUse: {} },
+      integrations: normalizeIntegrations(),
     };
   }
 }
@@ -294,17 +329,17 @@ async function getCatalog(token) {
           (entry) =>
             entry && entry.endpoint && /^https:\/\//.test(entry.endpoint),
         )
-        .map((entry) => {
-          const origin = new URL(entry.endpoint).origin;
+          .map((entry) => {
+          const endpoint = new URL(entry.endpoint).href.replace(/\/$/, "");
           return [
-            origin,
+            endpoint,
             {
               name:
                 entry.name
                   .replace(/GPT|Opus/g, "")
                   .replace(/[（）()]/g, "")
-                  .trim() || new URL(origin).host,
-              endpoint: origin,
+                  .trim() || new URL(endpoint).host,
+              endpoint,
               description: entry.description || "",
             },
           ];
@@ -781,7 +816,7 @@ ipcMain.handle("login", async (_event, credentials) => {
     keyGroupIds: {},
     setupDone: previous.setupDone || false,
     rememberLogin: credentials.rememberLogin !== false,
-    integrations: previous.integrations || { localization: true, computerUse: {} },
+    integrations: normalizeIntegrations(previous.integrations),
   };
   await writeSession(session);
   return { user: session.user, catalog: await getCatalog(session.token) };
@@ -803,7 +838,7 @@ ipcMain.handle("verify-two-factor", async (_event, { tempToken, code }) => {
     keyGroupIds: {},
     setupDone: previous.setupDone || false,
     rememberLogin: previous.pendingRememberLogin !== false,
-    integrations: previous.integrations || { localization: true, computerUse: {} },
+    integrations: normalizeIntegrations(previous.integrations),
   };
   await writeSession(session);
   return { user: session.user };
@@ -825,7 +860,7 @@ ipcMain.handle("logout", async () => {
     user: null,
     rememberLogin: false,
     setupDone: session.setupDone || false,
-    integrations: session.integrations || { localization: true, computerUse: {} },
+    integrations: normalizeIntegrations(session.integrations),
   });
   return true;
 });
@@ -834,7 +869,7 @@ ipcMain.handle("set-integrations", async (_event, { tool, localization, computer
   const integrations = {
     localization: typeof localization === "boolean"
       ? localization : session.integrations?.localization !== false,
-    computerUse: { ...(session.integrations?.computerUse || {}) },
+    computerUse: { ...normalizeIntegrations(session.integrations).computerUse },
     officialNetwork: typeof officialNetwork === "boolean"
       ? officialNetwork : Boolean(session.integrations?.officialNetwork),
   };
@@ -862,9 +897,10 @@ ipcMain.handle("catalog", async () => {
 });
 ipcMain.handle("save-preferences", async (_event, preferences) => {
   const session = await readSession();
-  const endpoint =
-    preferences.selectedEndpoint?.endpoint || "https://jokerdeck.de5.net";
   const tool = preferences.tool === "claude" ? "claude" : "codex";
+  const endpoint = tool === "codex"
+    ? normalizeOpenAiEndpoint(preferences.selectedEndpoint?.endpoint, preferences.useV1 !== false)
+    : (preferences.selectedEndpoint?.endpoint || "https://jokerdeck.de5.net");
   if (session.integrations?.computerUse?.[tool]) await configureComputerUse(tool, true);
   if (tool === "claude")
     await updateClaudeConfig({ endpoint, apiKey: preferences.apiKey });
@@ -879,16 +915,21 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
         }
       : session.selectedGroups || {},
     selectedEndpoint: preferences.selectedEndpoint,
+    useV1: preferences.useV1 !== false,
     keyGroupIds: preferences.selectedGroup
       ? { ...(session.keyGroupIds || {}), [tool]: preferences.selectedGroup.id }
       : session.keyGroupIds || {},
     setupDone: true,
   });
-  return true;
+  return {
+    endpoint,
+    apiKey: preferences.apiKey || "",
+    apiKeyPrefix: preferences.apiKey ? `${preferences.apiKey.slice(0, 6)}…${preferences.apiKey.slice(-4)}` : "",
+  };
 });
 ipcMain.handle("create-key", async (_event, { groupId, name }) => {
   const session = await validSession();
-  return api(
+  const result = await api(
     "/keys",
     {
       method: "POST",
@@ -899,6 +940,7 @@ ipcMain.handle("create-key", async (_event, { groupId, name }) => {
     },
     session.token,
   );
+  return { ...result, key: extractApiKey(result) };
 });
 ipcMain.handle("configured-key", async (_event, { groupId, tool }) => {
   const session = await readSession();
