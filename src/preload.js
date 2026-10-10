@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("jokerdeck", {
   computerUsePermissions: () => ipcRenderer.invoke("computer-use-permissions"),
   nodeStatus: () => ipcRenderer.invoke("node-status"),
   nodeConnect: () => ipcRenderer.invoke("node-connect"),
+  nodeRefresh: () => ipcRenderer.invoke("node-refresh"),
   nodeDisconnect: () => ipcRenderer.invoke("node-disconnect"),
   launchCodex: (options) => ipcRenderer.invoke("launch-codex", options),
   launchClaude: () => ipcRenderer.invoke("launch-claude"),

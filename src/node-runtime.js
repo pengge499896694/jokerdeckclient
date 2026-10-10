@@ -39,6 +39,9 @@ class NodeRuntime {
     this.selectedNode = "";
     this.selectedLatency = null;
     this.latencies = [];
+    this.nodeList = [];
+    this.pinnedNode = "";
+    this.connectPromise = null;
   }
 
   status() {
@@ -60,10 +63,20 @@ class NodeRuntime {
   }
 
   async connect() {
+    if (this.connectPromise) return this.connectPromise;
+    this.connectPromise = this.connectInternal();
+    try {
+      return await this.connectPromise;
+    } finally {
+      this.connectPromise = null;
+    }
+  }
+
+  async connectInternal() {
     if (this.policy.enabled === false) throw new Error("节点服务已由管理员暂停");
     if (this.status().connected) {
       try {
-        await probeOfficialProxy(`127.0.0.1:${this.port}`, 10000);
+        await this.measureAndSelectNode(this.nodeList, this.pinnedNode, this.controllerPort, this.port);
         this.officialReachable = true;
         return this.status();
       } catch (error) {
@@ -109,6 +122,8 @@ class NodeRuntime {
     this.port = port;
     this.controllerPort = controllerPort;
     this.nodes = nodes.length;
+    this.nodeList = nodes;
+    this.pinnedNode = pinnedNode;
     try {
       let lastError;
       for (let attempt = 0; attempt < 12; attempt++) {
@@ -140,6 +155,8 @@ class NodeRuntime {
     this.selectedNode = "";
     this.selectedLatency = null;
     this.latencies = [];
+    this.nodeList = [];
+    this.pinnedNode = "";
     return this.status();
   }
 

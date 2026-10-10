@@ -81,7 +81,7 @@
             <div>
               <p class="eyebrow">配置中心</p>
               <h1>选择你的工作分组</h1>
-              <p>可通过官方节点启动以解锁插件，同时让模型请求走你选择的中转地址。</p>
+              <p>选择分组和线路后即可启动。</p>
             </div>
             <button id="refresh" class="icon-button" title="刷新数据">↻</button>
           </div>
@@ -134,16 +134,16 @@
               </div>
               <div class="panel capability-panel">
                 <div class="panel-title">
-                  <h2>本机检查</h2>
-                  <span class="pill">组件状态</span>
+                  <h2>插件与代理</h2>
+                  <span class="pill">实时</span>
                 </div>
                 <div id="capabilities" class="capability-list"></div>
                 <div class="integration-options">
                   <label id="localization-option" class="setting-choice"><span>中文启动 Codex</span><input id="localization-setting" type="checkbox" checked /></label>
-                  <label id="official-network-option" class="setting-choice"><span>官方 Computer Use 节点</span><input id="official-network-setting" type="checkbox" /></label>
+                  <label id="official-network-option" class="setting-choice"><span>官方代理（常驻自动选最快）</span><input id="official-network-setting" type="checkbox" checked disabled /></label>
                   <p id="node-status" class="muted integration-status hidden"></p>
                   <div id="node-delays" class="node-delay-list hidden" aria-live="polite"></div>
-                  <p id="node-note" class="muted integration-status hidden">节点只在启动 Codex 时临时使用，启动完成后会关闭；模型请求仍按下方中转配置发送。</p>
+                  <p id="node-note" class="muted integration-status hidden">应用打开即启动代理，持续自动切换低延迟节点。</p>
                   <label class="setting-choice"><span>本地桌面控制 MCP</span><input id="computer-use-setting" type="checkbox" /></label>
                   <p class="muted integration-status">此开关配置独立的本地 MCP。官方 Computer Use 的可用性由 ChatGPT 账号、组织和地区决定，请以官方设置为准。</p>
                   <button id="computer-use-permissions" class="secondary wide hidden">检查桌面权限</button>

@@ -30,7 +30,7 @@ const MCP_NAME = "jokerdeck-computer-use";
 const DEFAULT_INTEGRATIONS = Object.freeze({
   localization: true,
   computerUse: { codex: true, claude: false },
-  officialNetwork: false,
+  officialNetwork: true,
 });
 
 function normalizeIntegrations(value = {}) {
@@ -40,7 +40,8 @@ function normalizeIntegrations(value = {}) {
       codex: value.computerUse?.codex !== false,
       claude: value.computerUse?.claude === true,
     },
-    officialNetwork: value.officialNetwork === true,
+    // Official routing is the launcher's resident connectivity path.
+    officialNetwork: true,
   };
 }
 
@@ -57,6 +58,18 @@ function getNodeRuntime() {
     fetchImpl: networkFetch,
   });
   return nodeRuntime;
+}
+
+async function autoStartNode() {
+  const session = await readSession();
+  if (!session.token) return;
+  try {
+    const runtime = getNodeRuntime();
+    runtime.setPolicy(await getNodePolicy(session.token));
+    await runtime.connect();
+  } catch (error) {
+    console.warn("官方代理自动启动失败：", error.message || error);
+  }
 }
 
 async function getNodePolicy(token) {
@@ -907,8 +920,7 @@ ipcMain.handle("set-integrations", async (_event, { tool, localization, computer
     localization: typeof localization === "boolean"
       ? localization : session.integrations?.localization !== false,
     computerUse: { ...normalizeIntegrations(session.integrations).computerUse },
-    officialNetwork: typeof officialNetwork === "boolean"
-      ? officialNetwork : Boolean(session.integrations?.officialNetwork),
+    officialNetwork: true,
   };
   if (typeof computerUse === "boolean") {
     const target = tool === "claude" ? "claude" : "codex";
@@ -936,14 +948,16 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
   const session = await readSession();
   const tool = preferences.tool === "claude" ? "claude" : "codex";
   const officialCodex = tool === "codex" && preferences.officialNetwork === true;
-  const usingRelay = true;
-  const endpoint = tool === "codex"
+  const endpoint = officialCodex ? "" : tool === "codex"
     ? normalizeOpenAiEndpoint(preferences.selectedEndpoint?.endpoint, preferences.useV1 !== false)
     : (preferences.selectedEndpoint?.endpoint || "https://jokerdeck.de5.net");
   if (session.integrations?.computerUse?.[tool]) await configureComputerUse(tool, true);
   let configPath;
   if (tool === "claude") {
     configPath = await updateClaudeConfig({ endpoint, apiKey: preferences.apiKey });
+  } else if (officialCodex) {
+    await restoreOfficialCodexConfig();
+    configPath = path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "config.toml");
   } else {
     configPath = await updateCodexConfig({ endpoint, apiKey: preferences.apiKey });
     const [writtenEndpoint, writtenKey] = await Promise.all([
@@ -963,7 +977,7 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
       : session.selectedGroups || {},
     selectedEndpoint: preferences.selectedEndpoint,
     useV1: preferences.useV1 !== false,
-    keyGroupIds: preferences.selectedGroup
+    keyGroupIds: preferences.selectedGroup && !officialCodex
       ? { ...(session.keyGroupIds || {}), [tool]: preferences.selectedGroup.id }
       : session.keyGroupIds || {},
     activeConfig: preferences.selectedGroup
@@ -976,9 +990,9 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
           route: preferences.selectedEndpoint?.endpoint || "",
           endpoint,
           configPath,
-          provider: "custom",
-          wireApi: tool === "codex" ? "responses" : "",
-          requiresOpenAiAuth: false,
+          provider: officialCodex ? "official" : "custom",
+          wireApi: officialCodex ? "" : tool === "codex" ? "responses" : "",
+          requiresOpenAiAuth: officialCodex,
         }
       : session.activeConfig || null,
     setupDone: true,
@@ -986,7 +1000,7 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
   return {
     endpoint,
     mode: officialCodex ? "official-node-relay" : "relay",
-    apiKey: preferences.apiKey || "",
+    apiKey: officialCodex ? "" : preferences.apiKey || "",
     apiKeyPrefix: preferences.apiKey ? `${preferences.apiKey.slice(0, 6)}…${preferences.apiKey.slice(-4)}` : "",
     configPath,
   };
@@ -1057,6 +1071,12 @@ ipcMain.handle("node-connect", async () => {
   const status = await runtime.connect();
   return { ...status, codexRunning: await codexIsRunning() };
 });
+ipcMain.handle("node-refresh", async () => {
+  const session = await validSession();
+  const runtime = getNodeRuntime();
+  runtime.setPolicy(await getNodePolicy(session.token));
+  return runtime.connect();
+});
 ipcMain.handle("node-disconnect", () => getNodeRuntime().disconnect());
 ipcMain.handle("launch-codex", async (_event, { localized, officialNetwork } = {}) => {
   const codex = await detectCodex();
@@ -1066,12 +1086,7 @@ ipcMain.handle("launch-codex", async (_event, { localized, officialNetwork } = {
     const runtime = getNodeRuntime();
     runtime.setPolicy(await getNodePolicy(session.token));
     const status = await runtime.connect();
-    try {
-      return await launchProxiedCodex(`127.0.0.1:${status.port}`, localized !== false, codex.command);
-    } finally {
-      // The node is only needed while handing the proxy settings to Codex.
-      runtime.disconnect();
-    }
+    return launchProxiedCodex(`127.0.0.1:${status.port}`, localized !== false, codex.command);
   }
   if (localized !== false) return launchLocalizedCodex();
   await launchCodex("", codex.command);
@@ -1091,10 +1106,10 @@ ipcMain.handle("app-version", () => app.getVersion());
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 900,
-    height: 640,
-    minWidth: 760,
-    minHeight: 560,
+    width: 760,
+    height: 540,
+    minWidth: 640,
+    minHeight: 500,
     autoHideMenuBar: process.platform === "win32",
     title: "Jokerdeck Switch",
     icon: path.join(__dirname, "..", "assets", "icon.png"),
@@ -1112,6 +1127,7 @@ app.whenReady().then(() => {
   if (process.platform === "darwin")
     app.dock.setIcon(path.join(__dirname, "..", "assets", "icon.png"));
   createWindow();
+  void autoStartNode();
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

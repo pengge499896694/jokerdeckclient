@@ -787,6 +787,190 @@ footer {
   color: #95a3a4;
   font-size: 11px;
 }
+
+/* Compact workbench layout: keep the primary setup flow visible without the extra chrome. */
+body {
+  min-width: 640px;
+}
+.topbar {
+  height: 46px;
+  padding: 0 16px;
+}
+.brand {
+  gap: 8px;
+}
+.brand-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+.brand strong { font-size: 13px; }
+.brand span { font-size: 9px; }
+.header-actions,
+.footer-actions { gap: 10px; }
+.view {
+  width: min(920px, calc(100% - 32px));
+}
+.login-layout {
+  grid-template-columns: 1fr 0.9fr;
+  gap: 24px;
+  padding: 24px 0;
+}
+.welcome {
+  padding-left: 8px;
+}
+.welcome h1,
+.page-heading h1,
+.success-view h1 {
+  font-size: 26px;
+  margin-bottom: 10px;
+}
+.welcome > p:not(.eyebrow) {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.feature-list {
+  gap: 12px;
+  margin-top: 18px;
+  font-size: 11px;
+}
+.form-panel {
+  padding: 15px;
+}
+.panel-heading {
+  margin-bottom: 16px;
+}
+label {
+  margin: 10px 0;
+}
+input {
+  padding: 9px 10px;
+  margin-top: 4px;
+}
+.form-panel .primary {
+  margin-top: 12px;
+}
+.text-link {
+  margin-top: 12px;
+}
+.page-heading {
+  padding: 16px 0 8px;
+}
+.page-heading h1 {
+  font-size: 23px;
+}
+.page-heading p:not(.eyebrow) {
+  font-size: 11px;
+}
+.icon-button {
+  width: 30px;
+  height: 30px;
+  font-size: 17px;
+}
+.mode-tabs {
+  margin-bottom: 8px;
+  padding: 3px;
+}
+.mode-tab {
+  padding: 6px 10px;
+  font-size: 11px;
+}
+.setup-grid {
+  grid-template-columns: 1.25fr 0.8fr;
+  gap: 8px;
+}
+.group-panel,
+.endpoint-panel,
+.capability-panel {
+  padding: 10px;
+}
+.panel-title {
+  margin-bottom: 8px;
+}
+.panel-title h2 {
+  font-size: 13px;
+}
+.group-list {
+  gap: 6px;
+  max-height: 235px;
+}
+.group-card {
+  padding: 9px;
+}
+.group-card strong { font-size: 12px; }
+.group-meta {
+  gap: 4px;
+  margin-top: 6px;
+}
+.group-meta span {
+  padding: 2px 4px;
+  font-size: 9px;
+}
+.side-stack {
+  gap: 8px;
+}
+.endpoint-list,
+.capability-list {
+  gap: 4px;
+}
+.endpoint-row,
+.capability-row {
+  padding: 5px 0;
+  font-size: 11px;
+}
+.secondary {
+  padding: 8px 10px;
+  margin-top: 8px;
+  font-size: 11px;
+}
+.capability-list {
+  display: none;
+}
+.config-panel {
+  display: none !important;
+}
+.integration-options {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.setting-choice {
+  margin: 7px 0;
+  font-size: 11px;
+}
+.integration-status {
+  margin-top: 4px;
+  font-size: 10px;
+}
+.node-delay-list {
+  font-size: 10px;
+}
+.bottom-bar {
+  padding: 12px 0 4px;
+}
+.launch-button {
+  min-width: 170px;
+  padding: 10px 13px;
+  font-size: 12px;
+}
+footer {
+  padding: 8px 16px;
+  font-size: 10px;
+}
+.launch-progress-panel {
+  width: min(420px, 100%);
+  padding: 18px;
+}
+.launch-steps,
+.launch-changes {
+  display: none;
+}
+.launch-progress-track {
+  margin: 14px 0 8px;
+}
+.launch-progress-detail {
+  margin-bottom: 4px;
+}
 .dialog-backdrop {
   position: fixed;
   inset: 0;

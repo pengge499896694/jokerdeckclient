@@ -7,7 +7,7 @@ const state = {
   category: "openai",
   selectedGroups: {},
   update: null,
-  integrations: { localization: true, computerUse: { codex: true, claude: false }, officialNetwork: false },
+  integrations: { localization: true, computerUse: { codex: true, claude: false }, officialNetwork: true },
   useV1: true,
   configured: {
     endpoint: "",
@@ -49,6 +49,7 @@ const launchProgressSteps = [
   { id: "start", title: "重启并启动客户端", detail: "让新配置生效，然后打开目标客户端" },
 ];
 let launchProgressState = [];
+let nodeRefreshTimer = null;
 
 function renderLaunchProgressSteps() {
   $("launch-steps").innerHTML = launchProgressState
@@ -248,6 +249,25 @@ function renderNodeStatus() {
   ).join("");
   $("official-network-setting").checked = Boolean(state.integrations.officialNetwork);
 }
+async function refreshNodeStatus(reprobe = false) {
+  if (currentTool() !== "codex" || !state.integrations.officialNetwork) return;
+  try {
+    state.nodeStatus = reprobe ? await window.jokerdeck.nodeRefresh() : await window.jokerdeck.nodeStatus();
+    renderNodeStatus();
+  } catch (error) {
+    state.nodeStatus = { ...state.nodeStatus, connected: false, officialReachable: false };
+    renderNodeStatus();
+    $("integration-status").textContent = errorText(error);
+  }
+}
+function startNodeRefresh() {
+  if (nodeRefreshTimer) clearInterval(nodeRefreshTimer);
+  nodeRefreshTimer = setInterval(() => refreshNodeStatus(true), 15000);
+}
+function stopNodeRefresh() {
+  if (nodeRefreshTimer) clearInterval(nodeRefreshTimer);
+  nodeRefreshTimer = null;
+}
 function updateSummary() {
   const officialNetwork = currentTool() === "codex" && Boolean(state.integrations.officialNetwork);
   $("selection-summary").textContent = state.selectedGroup
@@ -312,6 +332,15 @@ async function loadSetup() {
   state.nodeStatus = await window.jokerdeck.nodeStatus();
   renderCapabilities(state.capabilities);
   renderNodeStatus();
+  if (currentTool() === "codex" && state.integrations.officialNetwork) {
+    try {
+      state.nodeStatus = await window.jokerdeck.nodeConnect();
+      startNodeRefresh();
+      renderNodeStatus();
+    } catch (error) {
+      $("integration-status").textContent = errorText(error);
+    }
+  }
   await chooseFastestEndpoint(false);
   const savedConfig = state.activeConfig?.category === state.category ? state.activeConfig : null;
   if (state.selectedGroups[state.category]) {
@@ -356,24 +385,28 @@ $("official-network-setting").addEventListener("change", async () => {
   const checkbox = $("official-network-setting");
   const enabled = checkbox.checked;
   checkbox.disabled = true;
-  $("node-status").textContent = enabled ? "启动 Codex 时临时连接节点" : "正在断开节点…";
+  $("node-status").textContent = enabled ? "正在连接常驻代理…" : "常驻代理不可关闭…";
   try {
     if (enabled) {
       state.integrations = await window.jokerdeck.setIntegrations({ officialNetwork: true });
-      state.nodeStatus = await window.jokerdeck.nodeStatus();
-      $("integration-status").textContent = "已启用；点击启动 Codex 时临时连接节点，启动后自动关闭。";
+      state.nodeStatus = await window.jokerdeck.nodeConnect();
+      startNodeRefresh();
+      $("integration-status").textContent = "代理已开启，自动切换最快节点。";
     } else {
-      state.integrations = await window.jokerdeck.setIntegrations({ officialNetwork: false });
-      state.nodeStatus = await window.jokerdeck.nodeDisconnect();
-      $("integration-status").textContent = "节点已断开；当前 Codex 可能需要重启才能继续联网。";
+      checkbox.checked = true;
+      state.integrations = await window.jokerdeck.setIntegrations({ officialNetwork: true });
+      state.nodeStatus = await window.jokerdeck.nodeConnect();
+      startNodeRefresh();
+      $("integration-status").textContent = "代理保持开启。";
     }
   } catch (error) {
     if (enabled) {
       try { state.nodeStatus = await window.jokerdeck.nodeDisconnect(); } catch {}
+      stopNodeRefresh();
     }
     $("integration-status").textContent = errorText(error);
   } finally {
-    checkbox.disabled = false;
+    checkbox.disabled = true;
     renderNodeStatus();
   }
 });
@@ -592,27 +625,31 @@ $("launch").addEventListener("click", async () => {
 
     const officialNetwork = tool === "codex" && Boolean(state.integrations.officialNetwork);
     currentStep = "key";
-    if (!state.selectedGroup)
+    if (!state.selectedGroup && !officialNetwork)
       throw new Error("请先选择一个分组");
     let apiKey = "";
     let keyCreated = false;
-    updateLaunchProgress("key", "active", `正在准备 ${state.selectedGroup.name} 的专用密钥`);
-    apiKey = await window.jokerdeck.configuredKey({
-      groupId: state.selectedGroup.id,
-      tool,
-    });
-    if (!apiKey) {
-      const key = await window.jokerdeck.createKey({
+    if (officialNetwork) {
+      updateLaunchProgress("key", "done", "保留官方登录，不写入中转密钥");
+    } else {
+      updateLaunchProgress("key", "active", `正在准备 ${state.selectedGroup.name} 的专用密钥`);
+      apiKey = await window.jokerdeck.configuredKey({
         groupId: state.selectedGroup.id,
-        name: `jokerdeck-client-${state.selectedGroup.id}`,
+        tool,
       });
-      apiKey = key?.key || key?.api_key || key?.token || key?.custom_key || key?.data?.key || key?.data?.api_key || key?.data?.token || key?.data?.custom_key;
-      keyCreated = Boolean(apiKey);
+      if (!apiKey) {
+        const key = await window.jokerdeck.createKey({
+          groupId: state.selectedGroup.id,
+          name: `jokerdeck-client-${state.selectedGroup.id}`,
+        });
+        apiKey = key?.key || key?.api_key || key?.token || key?.custom_key || key?.data?.key || key?.data?.api_key || key?.data?.token || key?.data?.custom_key;
+        keyCreated = Boolean(apiKey);
+      }
+      if (!apiKey) throw new Error("服务端未返回新密钥，请到 API 密钥页确认");
+      updateLaunchProgress("key", "done", `${keyCreated ? "已创建新的分组专用 API Key" : "已找到并沿用现有分组 API Key"} · ${maskSecret(apiKey)}`);
+      addLaunchChange(`${state.selectedGroup.name}：${keyCreated ? "创建并使用新的" : "沿用现有"} API Key`);
     }
-    if (!apiKey) throw new Error("服务端未返回新密钥，请到 API 密钥页确认");
-    updateLaunchProgress("key", "done", `${keyCreated ? "已创建新的分组专用 API Key" : "已找到并沿用现有分组 API Key"} · ${maskSecret(apiKey)}`);
-    addLaunchChange(`${state.selectedGroup.name}：${keyCreated ? "创建并使用新的" : "沿用现有"} API Key`);
-    if (officialNetwork) addLaunchChange("通过官方节点启动，保留插件能力；模型请求走中转");
+    if (officialNetwork) addLaunchChange("官方客户端和 ChatGPT 共用常驻代理");
 
     state.useV1 = $("gpt-v1-routing").checked;
     currentStep = "write";
@@ -637,9 +674,9 @@ $("launch").addEventListener("click", async () => {
       endpoint: saved?.endpoint || state.selectedEndpoint?.endpoint || "",
       apiKey,
       configPath: saved?.configPath || "",
-      provider: "custom",
-      wireApi: "responses",
-      requiresOpenAiAuth: false,
+      provider: officialNetwork ? "official" : "custom",
+      wireApi: officialNetwork ? "" : "responses",
+      requiresOpenAiAuth: officialNetwork,
     };
     state.configured = { ...state.activeConfig };
     renderConfigured();
@@ -671,7 +708,7 @@ $("launch").addEventListener("click", async () => {
     await new Promise((resolve) => setTimeout(resolve, 280));
     $("launch-progress").classList.add("hidden");
     $("success-text").textContent =
-      `${state.selectedGroup?.name || "官方 Codex"} 已保存，${officialNetwork ? "通过官方节点启动，模型请求仍走中转配置" : `${state.selectedEndpoint?.name || "默认线路"} 已写入 ${saved?.configPath || "本地配置"}`}，正在打开 ${currentAppName()}。${launchResult?.warning || ""}`;
+      `${state.selectedGroup?.name || "官方 Codex"} 已保存，${officialNetwork ? "官方客户端和 ChatGPT 正在使用常驻代理" : `${state.selectedEndpoint?.name || "默认线路"} 已写入 ${saved?.configPath || "本地配置"}`}，正在打开 ${currentAppName()}。${launchResult?.warning || ""}`;
     renderSuccessConfig();
     $("success-view").querySelector("h1").textContent =
       `${currentAppName()} 正在启动`;
@@ -710,7 +747,7 @@ $("site-link").addEventListener("click", () =>
     $("app-version").textContent = `v${await window.jokerdeck.appVersion()}`;
     openUpdateDialog().catch(() => {});
     const session = await window.jokerdeck.session();
-    state.integrations = session.integrations || { localization: true, computerUse: { codex: true, claude: false }, officialNetwork: false };
+    state.integrations = session.integrations || { localization: true, computerUse: { codex: true, claude: false }, officialNetwork: true };
     state.activeConfig = session.activeConfig || null;
     if (state.activeConfig) state.configured = { ...state.configured, ...state.activeConfig };
     $("remember-login").checked = session.rememberLogin !== false;
