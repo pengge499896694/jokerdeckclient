@@ -948,16 +948,13 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
   const session = await readSession();
   const tool = preferences.tool === "claude" ? "claude" : "codex";
   const officialCodex = tool === "codex" && preferences.officialNetwork === true;
-  const endpoint = officialCodex ? "" : tool === "codex"
+  const endpoint = tool === "codex"
     ? normalizeOpenAiEndpoint(preferences.selectedEndpoint?.endpoint, preferences.useV1 !== false)
     : (preferences.selectedEndpoint?.endpoint || "https://jokerdeck.de5.net");
   if (session.integrations?.computerUse?.[tool]) await configureComputerUse(tool, true);
   let configPath;
   if (tool === "claude") {
     configPath = await updateClaudeConfig({ endpoint, apiKey: preferences.apiKey });
-  } else if (officialCodex) {
-    await restoreOfficialCodexConfig();
-    configPath = path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "config.toml");
   } else {
     configPath = await updateCodexConfig({ endpoint, apiKey: preferences.apiKey });
     const [writtenEndpoint, writtenKey] = await Promise.all([
@@ -977,7 +974,7 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
       : session.selectedGroups || {},
     selectedEndpoint: preferences.selectedEndpoint,
     useV1: preferences.useV1 !== false,
-    keyGroupIds: preferences.selectedGroup && !officialCodex
+    keyGroupIds: preferences.selectedGroup
       ? { ...(session.keyGroupIds || {}), [tool]: preferences.selectedGroup.id }
       : session.keyGroupIds || {},
     activeConfig: preferences.selectedGroup
@@ -990,9 +987,9 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
           route: preferences.selectedEndpoint?.endpoint || "",
           endpoint,
           configPath,
-          provider: officialCodex ? "official" : "custom",
-          wireApi: officialCodex ? "" : tool === "codex" ? "responses" : "",
-          requiresOpenAiAuth: officialCodex,
+          provider: "custom",
+          wireApi: tool === "codex" ? "responses" : "",
+          requiresOpenAiAuth: false,
         }
       : session.activeConfig || null,
     setupDone: true,
@@ -1000,7 +997,7 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
   return {
     endpoint,
     mode: officialCodex ? "official-node-relay" : "relay",
-    apiKey: officialCodex ? "" : preferences.apiKey || "",
+    apiKey: preferences.apiKey || "",
     apiKeyPrefix: preferences.apiKey ? `${preferences.apiKey.slice(0, 6)}…${preferences.apiKey.slice(-4)}` : "",
     configPath,
   };

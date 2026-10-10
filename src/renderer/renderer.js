@@ -625,31 +625,27 @@ $("launch").addEventListener("click", async () => {
 
     const officialNetwork = tool === "codex" && Boolean(state.integrations.officialNetwork);
     currentStep = "key";
-    if (!state.selectedGroup && !officialNetwork)
+    if (!state.selectedGroup)
       throw new Error("请先选择一个分组");
     let apiKey = "";
     let keyCreated = false;
-    if (officialNetwork) {
-      updateLaunchProgress("key", "done", "保留官方登录，不写入中转密钥");
-    } else {
-      updateLaunchProgress("key", "active", `正在准备 ${state.selectedGroup.name} 的专用密钥`);
-      apiKey = await window.jokerdeck.configuredKey({
+    updateLaunchProgress("key", "active", `正在准备 ${state.selectedGroup.name} 的专用密钥`);
+    apiKey = await window.jokerdeck.configuredKey({
+      groupId: state.selectedGroup.id,
+      tool,
+    });
+    if (!apiKey) {
+      const key = await window.jokerdeck.createKey({
         groupId: state.selectedGroup.id,
-        tool,
+        name: `jokerdeck-client-${state.selectedGroup.id}`,
       });
-      if (!apiKey) {
-        const key = await window.jokerdeck.createKey({
-          groupId: state.selectedGroup.id,
-          name: `jokerdeck-client-${state.selectedGroup.id}`,
-        });
-        apiKey = key?.key || key?.api_key || key?.token || key?.custom_key || key?.data?.key || key?.data?.api_key || key?.data?.token || key?.data?.custom_key;
-        keyCreated = Boolean(apiKey);
-      }
-      if (!apiKey) throw new Error("服务端未返回新密钥，请到 API 密钥页确认");
-      updateLaunchProgress("key", "done", `${keyCreated ? "已创建新的分组专用 API Key" : "已找到并沿用现有分组 API Key"} · ${maskSecret(apiKey)}`);
-      addLaunchChange(`${state.selectedGroup.name}：${keyCreated ? "创建并使用新的" : "沿用现有"} API Key`);
+      apiKey = key?.key || key?.api_key || key?.token || key?.custom_key || key?.data?.key || key?.data?.api_key || key?.data?.token || key?.data?.custom_key;
+      keyCreated = Boolean(apiKey);
     }
-    if (officialNetwork) addLaunchChange("官方客户端和 ChatGPT 共用常驻代理");
+    if (!apiKey) throw new Error("服务端未返回新密钥，请到 API 密钥页确认");
+    updateLaunchProgress("key", "done", `${keyCreated ? "已创建新的分组专用 API Key" : "已找到并沿用现有分组 API Key"} · ${maskSecret(apiKey)}`);
+    addLaunchChange(`${state.selectedGroup.name}：${keyCreated ? "创建并使用新的" : "沿用现有"} API Key`);
+    if (officialNetwork) addLaunchChange("模型请求使用中转配置，网络出口使用常驻代理");
 
     state.useV1 = $("gpt-v1-routing").checked;
     currentStep = "write";
@@ -674,9 +670,9 @@ $("launch").addEventListener("click", async () => {
       endpoint: saved?.endpoint || state.selectedEndpoint?.endpoint || "",
       apiKey,
       configPath: saved?.configPath || "",
-      provider: officialNetwork ? "official" : "custom",
-      wireApi: officialNetwork ? "" : "responses",
-      requiresOpenAiAuth: officialNetwork,
+      provider: "custom",
+      wireApi: "responses",
+      requiresOpenAiAuth: false,
     };
     state.configured = { ...state.activeConfig };
     renderConfigured();
@@ -708,7 +704,7 @@ $("launch").addEventListener("click", async () => {
     await new Promise((resolve) => setTimeout(resolve, 280));
     $("launch-progress").classList.add("hidden");
     $("success-text").textContent =
-      `${state.selectedGroup?.name || "官方 Codex"} 已保存，${officialNetwork ? "官方客户端和 ChatGPT 正在使用常驻代理" : `${state.selectedEndpoint?.name || "默认线路"} 已写入 ${saved?.configPath || "本地配置"}`}，正在打开 ${currentAppName()}。${launchResult?.warning || ""}`;
+      `${state.selectedGroup?.name || "官方 Codex"} 已保存，${officialNetwork ? "模型请求使用中转配置，网络出口使用常驻代理" : `${state.selectedEndpoint?.name || "默认线路"} 已写入 ${saved?.configPath || "本地配置"}`}，正在打开 ${currentAppName()}。${launchResult?.warning || ""}`;
     renderSuccessConfig();
     $("success-view").querySelector("h1").textContent =
       `${currentAppName()} 正在启动`;
