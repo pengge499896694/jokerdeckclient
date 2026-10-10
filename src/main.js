@@ -14,6 +14,7 @@ const { normalizeOpenAiEndpoint, extractApiKey } = require("./openai-endpoint");
 const { localizedLaunchResult } = require("./localization-result");
 const { backupOriginalCodexConfig, hasOriginalCodexBackup, restoreOriginalCodexConfig } = require("./codex-config-backup");
 const { createDiagnostics } = require("./diagnostics");
+const { retryingFetch, nodeConnectionError } = require("./network-fetch");
 const {
   parseWindowsAppPath,
   parseWindowsCommandPaths,
@@ -60,7 +61,8 @@ function normalizeIntegrations(value = {}) {
 
 // Electron's network stack follows the desktop proxy and certificate settings;
 // Node's global fetch does not on Windows.
-const networkFetch = (...args) => net.fetch(...args);
+const networkFetch = (input, options = {}) =>
+  retryingFetch((request, requestOptions) => net.fetch(request, requestOptions), input, options);
 
 function getDiagnostics() {
   if (!diagnostics) diagnostics = createDiagnostics({ directory: path.join(app.getPath("userData"), "logs") });
@@ -1109,18 +1111,26 @@ ipcMain.handle("capabilities", detectCapabilities);
 ipcMain.handle("node-status", () => getNodeRuntime().status());
 ipcMain.handle("node-connect", async () => {
   proxyPaused = false;
-  const session = await validSession();
-  const runtime = getNodeRuntime();
-  runtime.setPolicy(await getNodePolicy(session.token));
-  const status = await runtime.connect();
-  return { ...status, codexRunning: await codexIsRunning() };
+  try {
+    const session = await validSession();
+    const runtime = getNodeRuntime();
+    runtime.setPolicy(await getNodePolicy(session.token));
+    const status = await runtime.connect();
+    return { ...status, codexRunning: await codexIsRunning() };
+  } catch (error) {
+    throw nodeConnectionError(error);
+  }
 });
 ipcMain.handle("node-refresh", async () => {
   proxyPaused = false;
-  const session = await validSession();
-  const runtime = getNodeRuntime();
-  runtime.setPolicy(await getNodePolicy(session.token));
-  return runtime.connect();
+  try {
+    const session = await validSession();
+    const runtime = getNodeRuntime();
+    runtime.setPolicy(await getNodePolicy(session.token));
+    return runtime.connect();
+  } catch (error) {
+    throw nodeConnectionError(error);
+  }
 });
 ipcMain.handle("node-disconnect", () => getNodeRuntime().disconnect());
 ipcMain.handle("codex-restore-status", () =>
