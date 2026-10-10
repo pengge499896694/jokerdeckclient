@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld("jokerdeck", {
   createKey: (payload) => ipcRenderer.invoke("create-key", payload),
   configuredKey: (payload) => ipcRenderer.invoke("configured-key", payload),
   configuredConfig: (payload) => ipcRenderer.invoke("configured-config", payload),
+  codexRestoreStatus: () => ipcRenderer.invoke("codex-restore-status"),
+  restoreCodexConfig: () => ipcRenderer.invoke("restore-codex-config"),
   healthCheck: (endpoints) => ipcRenderer.invoke("health-check", endpoints),
   capabilities: () => ipcRenderer.invoke("capabilities"),
   setIntegrations: (settings) => ipcRenderer.invoke("set-integrations", settings),
@@ -26,6 +28,11 @@ contextBridge.exposeInMainWorld("jokerdeck", {
   appVersion: () => ipcRenderer.invoke("app-version"),
   checkUpdate: () => ipcRenderer.invoke("check-update"),
   downloadUpdate: () => ipcRenderer.invoke("download-update"),
+  unlockLogs: (password) => ipcRenderer.invoke("logs-unlock", password),
+  lockLogs: () => ipcRenderer.invoke("logs-lock"),
+  logsEntries: () => ipcRenderer.invoke("logs-entries"),
+  changeLogsPassword: (payload) => ipcRenderer.invoke("logs-change-password", payload),
+  logEvent: (event, status) => ipcRenderer.invoke("logs-event", { event, status }),
   onDownloadProgress: (callback) => {
     const listener = (_event, progress) => callback(progress);
     ipcRenderer.on("download-progress", listener);

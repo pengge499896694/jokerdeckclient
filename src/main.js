@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, net, safeStorage, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, safeStorage, shell, Tray } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs/promises");
 const { createWriteStream, createReadStream } = require("node:fs");
@@ -9,14 +9,16 @@ const { Readable } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
 const { NodeRuntime } = require("./node-runtime");
 const { normalizeNodePolicy } = require("./node-subscription");
-const { normalizeLocalProxy, proxyServerArgument } = require("./startup-proxy");
+const { normalizeLocalProxy, proxyServerArgument, proxiedDesktopEnvironment, probeOfficialProxy } = require("./startup-proxy");
 const { normalizeOpenAiEndpoint, extractApiKey } = require("./openai-endpoint");
+const { localizedLaunchResult } = require("./localization-result");
+const { backupOriginalCodexConfig, hasOriginalCodexBackup, restoreOriginalCodexConfig } = require("./codex-config-backup");
+const { createDiagnostics } = require("./diagnostics");
 const {
   parseWindowsAppPath,
   parseWindowsCommandPaths,
-  unique,
   windowsCodexAppCandidates,
-  windowsCodexCandidates,
+  windowsCodexCliCandidates,
 } = require("./codex-detection");
 
 const API_ORIGIN = "https://jokerdeck.de5.net/api/v1";
@@ -26,6 +28,16 @@ let mainWindow;
 let transientSession = null;
 let computerUseInstallPromise = null;
 let nodeRuntime = null;
+let nodeSupervisor = null;
+let nodeSupervisorBusy = false;
+let tray = null;
+let quitting = false;
+let exitCleanupStarted = false;
+let proxyPaused = false;
+let managedCodexLaunch = false;
+let sessionEpoch = 0;
+let logsUnlocked = false;
+let diagnostics;
 const MCP_NAME = "jokerdeck-computer-use";
 const DEFAULT_INTEGRATIONS = Object.freeze({
   localization: true,
@@ -50,6 +62,14 @@ function normalizeIntegrations(value = {}) {
 // Node's global fetch does not on Windows.
 const networkFetch = (...args) => net.fetch(...args);
 
+function getDiagnostics() {
+  if (!diagnostics) diagnostics = createDiagnostics({ directory: path.join(app.getPath("userData"), "logs") });
+  return diagnostics;
+}
+function safeLog(event, status) {
+  return getDiagnostics().append(event, status).catch(() => {});
+}
+
 function getNodeRuntime() {
   if (!nodeRuntime) nodeRuntime = new NodeRuntime({
     root: app.isPackaged ? process.resourcesPath : path.join(__dirname, ".."),
@@ -61,14 +81,25 @@ function getNodeRuntime() {
 }
 
 async function autoStartNode() {
-  const session = await readSession();
-  if (!session.token) return;
+  if (nodeSupervisorBusy || quitting || proxyPaused) return;
+  nodeSupervisorBusy = true;
+  const epoch = sessionEpoch;
   try {
+    const session = await readSession();
+    if ((!session.token && !session.refreshToken) || sessionEpoch !== epoch) return;
+    const active = await validSession();
+    if (sessionEpoch !== epoch) return;
+    const policy = await getNodePolicy(active.token);
+    if (sessionEpoch !== epoch) return;
     const runtime = getNodeRuntime();
-    runtime.setPolicy(await getNodePolicy(session.token));
+    runtime.setPolicy(policy);
     await runtime.connect();
-  } catch (error) {
-    console.warn("官方代理自动启动失败：", error.message || error);
+    if (sessionEpoch !== epoch) runtime.disconnect();
+  } catch {
+    console.warn("官方代理自动启动失败；可在客户端检查代理状态");
+    await safeLog("proxy", "failed");
+  } finally {
+    nodeSupervisorBusy = false;
   }
 }
 
@@ -133,15 +164,26 @@ async function computerUseHelper() {
       if (!copied.ok) throw new Error(copied.output || "桌面控制组件安装失败");
       const iconSource = path.join(__dirname, "..", "assets", "icon.png");
       const iconset = path.join(app.getPath("userData"), "jokerdeck.iconset");
+      const physicalIcon = path.join(app.getPath("userData"), "jokerdeck-icon-source.png");
       const iconResources = path.join(stagedApp, "Contents", "Resources");
       await fs.rm(iconset, { recursive: true, force: true });
       await fs.mkdir(iconset, { recursive: true });
-      for (const size of [16, 32, 128, 256, 512]) {
-        await runDetailed("sips", ["-z", String(size), String(size), iconSource, "--out", path.join(iconset, `icon_${size}x${size}.png`)], 15000);
-        await runDetailed("sips", ["-z", String(size * 2), String(size * 2), iconSource, "--out", path.join(iconset, `icon_${size}x${size}@2x.png`)], 15000);
+      try {
+        // Native macOS tools cannot read files inside app.asar; materialize the icon first.
+        await fs.writeFile(physicalIcon, await fs.readFile(iconSource));
+        for (const size of [16, 32, 128, 256, 512]) {
+          for (const scale of [1, 2]) {
+            const filename = `icon_${size}x${size}${scale === 2 ? "@2x" : ""}.png`;
+            const result = await runDetailed("sips", ["-z", String(size * scale), String(size * scale), physicalIcon, "--out", path.join(iconset, filename)], 15000);
+            if (!result.ok) throw new Error(result.output || "桌面控制图标生成失败");
+          }
+        }
+        const result = await runDetailed("iconutil", ["-c", "icns", iconset, "-o", path.join(iconResources, "Jokerdeck.icns")], 30000);
+        if (!result.ok) throw new Error(result.output || "桌面控制图标打包失败");
+      } finally {
+        await fs.rm(iconset, { recursive: true, force: true });
+        await fs.rm(physicalIcon, { force: true });
       }
-      await runDetailed("iconutil", ["-c", "icns", iconset, "-o", path.join(iconResources, "Jokerdeck.icns")], 30000);
-      await fs.rm(iconset, { recursive: true, force: true });
       await fs.copyFile(path.join(iconResources, "Jokerdeck.icns"), path.join(iconResources, "OpenComputerUse.icns"));
       const plist = path.join(stagedApp, "Contents", "Info.plist");
       await runDetailed("/usr/libexec/PlistBuddy", ["-c", "Set :CFBundleIconFile Jokerdeck.icns", plist], 10000);
@@ -365,6 +407,7 @@ async function getCatalog(token) {
 }
 
 async function validSession() {
+  const epoch = sessionEpoch;
   const session = await readSession();
   if (
     session.token &&
@@ -376,6 +419,7 @@ async function validSession() {
     method: "POST",
     body: JSON.stringify({ refresh_token: session.refreshToken }),
   });
+  if (epoch !== sessionEpoch) throw new Error("登录状态已变化，请重新登录");
   session.token = refreshed.access_token;
   session.refreshToken = refreshed.refresh_token || session.refreshToken;
   session.expiresAt = Date.now() + (refreshed.expires_in || 3600) * 1000;
@@ -399,6 +443,19 @@ function runDetailed(command, args, timeout = 15000, options = {}) {
   );
 }
 
+function windowsQuote(value) {
+  const text = String(value);
+  return `"${text.replaceAll("\\", "\\\\").replaceAll('"', '\\\"')}"`;
+}
+
+function runCodexCli(command, args, timeout = 15000) {
+  if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(command)) {
+    const invocation = [command, ...args].map(windowsQuote).join(" ");
+    return runDetailed("cmd.exe", ["/d", "/s", "/c", invocation], timeout);
+  }
+  return runDetailed(command, args, timeout);
+}
+
 async function detectCodex() {
   let candidates;
   if (process.platform === "win32") {
@@ -415,11 +472,13 @@ async function detectCodex() {
       const registry = await runDetailed("reg.exe", ["query", key, "/ve"]);
       discovered.push(...parseWindowsAppPath(registry.output));
     }
-    candidates = unique([...discovered, ...windowsCodexCandidates(process.env)]);
+    candidates = windowsCodexCliCandidates(discovered, process.env);
   } else {
     candidates = [
       "codex",
-      "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+      ...["/Applications", path.join(os.homedir(), "Applications")].flatMap((directory) =>
+        ["Codex.app", "ChatGPT.app"].map((bundle) =>
+          path.join(directory, bundle, "Contents", "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex"))),
     ];
   }
   for (const candidate of candidates) {
@@ -438,6 +497,14 @@ async function detectCodex() {
     for (const candidate of windowsCodexAppCandidates(process.env)) {
       if (await fileExists(candidate))
         return { installed: true, command: candidate, version: "桌面端已安装", desktop: true };
+    }
+  } else if (process.platform === "darwin") {
+    for (const directory of ["/Applications", path.join(os.homedir(), "Applications")]) {
+      for (const bundle of ["Codex.app", "ChatGPT.app"]) {
+        const executable = path.join(directory, bundle, "Contents", "MacOS", bundle.replace(".app", ""));
+        if (await fileExists(executable))
+          return { installed: true, command: executable, version: "桌面端已安装", desktop: true };
+      }
     }
   }
   return { installed: false, command: null, version: "" };
@@ -475,9 +542,13 @@ async function detectCapabilities() {
   const codex = await detectCodex();
   const claude = await detectClaude();
   const home = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const desktopInstalled = process.platform === "win32"
+    ? Boolean(await windowsCodexExecutable().catch(() => ""))
+    : process.platform === "darwin"
+      ? Boolean(await macCodexExecutable().catch(() => "")) : codex.installed;
   return {
     platform: process.platform,
-    codex,
+    codex: { ...codex, desktopInstalled },
     claude,
     localizationHelper: await fileExists(localizationHelper()),
     computerUseMcp: await fileExists(bundledComputerUseHelper()),
@@ -514,15 +585,26 @@ async function configureComputerUse(tool, enabled) {
     return;
   }
   const codex = await detectCodex();
-  if (!codex.installed) throw new Error("未检测到 Codex，无法配置桌面控制 MCP");
+  if (!codex.installed) {
+    if (!enabled) return;
+    throw new Error("桌面控制 MCP 需要 Codex CLI；中转和桌面启动不受影响");
+  }
+  if (codex.desktop) {
+    if (!enabled) return;
+    throw new Error("桌面控制 MCP 需要 Codex CLI；中转和桌面启动不受影响");
+  }
   await fs.mkdir(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), { recursive: true });
-  const current = await runDetailed(codex.command, ["mcp", "get", MCP_NAME, "--json"]);
+  const current = await runCodexCli(codex.command, ["mcp", "get", MCP_NAME, "--json"]);
   if (!enabled && !current.ok) return;
   const args = enabled
     ? ["mcp", "add", MCP_NAME, "--", executable, "mcp"]
     : ["mcp", "remove", MCP_NAME];
-  const result = await runDetailed(codex.command, args);
+  const result = await runCodexCli(codex.command, args);
   if (!result.ok) throw new Error(result.output || "Codex MCP 配置失败");
+  if (enabled) {
+    const verified = await runCodexCli(codex.command, ["mcp", "get", MCP_NAME, "--json"]);
+    if (!verified.ok) throw new Error(verified.output || "Codex MCP 注册后校验失败");
+  }
 }
 
 async function codexIsRunning() {
@@ -545,7 +627,10 @@ async function codexIsRunning() {
 
 async function quitRunningCodex() {
   if (process.platform === "darwin")
-    await runDetailed("osascript", ["-e", "tell application \"ChatGPT\" to quit"], 15000);
+    await Promise.all(["ChatGPT", "Codex"].map(async (name) => {
+      if ((await run("pgrep", ["-x", name])).ok)
+        await runDetailed("osascript", ["-e", `tell application \"${name}\" to quit`], 15000);
+    }));
   if (process.platform === "win32") {
     await Promise.all([
       runDetailed("taskkill.exe", ["/IM", "Codex.exe"], 15000),
@@ -573,19 +658,14 @@ async function launchLocalizedCodex(proxy = "") {
     await quitRunningCodex();
   }
   const address = proxy ? normalizeLocalProxy(proxy) : "";
-  const env = address ? {
-    ...process.env,
-    HTTP_PROXY: address, HTTPS_PROXY: address, ALL_PROXY: address,
-    http_proxy: address, https_proxy: address, all_proxy: address,
-  } : process.env;
+  const env = address ? proxiedDesktopEnvironment(address) : process.env;
   const args = ["--launch-zh", ...(address ? [proxyServerArgument(proxy)] : [])];
   const result = await runDetailed(executable, args, 120000, { env });
-  if (!result.ok && result.code !== 2)
-    throw new Error(result.output || "中文启动失败，请检查 Codex 安装状态");
-  return { started: true, localized: result.ok, warning: result.ok ? "" : "Codex 已启动，但中文界面未完全验证" };
+  return localizedLaunchResult(result);
 }
 
 async function updateCodexConfig({ endpoint, apiKey }) {
+  await safeLog("write", "active");
   const home = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
   const configPath = path.join(home, "config.toml");
   let config = "";
@@ -613,55 +693,17 @@ async function updateCodexConfig({ endpoint, apiKey }) {
     );
   else config = `model_provider = "custom"\n${config}`;
   await fs.mkdir(home, { recursive: true });
-  try {
-    const officialBackup = `${configPath}.jokerdeck.official.bak`;
-    if (await fileExists(configPath) && !(await fileExists(officialBackup)))
-      await fs.copyFile(configPath, officialBackup, { mode: 0o600 });
-    await fs.copyFile(configPath, `${configPath}.jokerdeck.bak`);
-  } catch {}
+  await backupOriginalCodexConfig(configPath);
   const temporaryPath = `${configPath}.jokerdeck.tmp`;
   await fs.writeFile(temporaryPath, config, { mode: 0o600 });
   await fs.rename(temporaryPath, configPath);
+  await safeLog("write", "done");
   return configPath;
 }
 
 async function restoreOfficialCodexConfig() {
   const home = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-  const configPath = path.join(home, "config.toml");
-  const officialBackupPath = `${configPath}.jokerdeck.official.bak`;
-  const current = await fs.readFile(configPath, "utf8").catch(() => "");
-  const looksLikeManagedProvider = (value) =>
-    /\[model_providers\.custom\]/.test(value) &&
-    /(?:base_url|experimental_bearer_token)\s*=/.test(value);
-  let backup = "";
-  if (await fileExists(officialBackupPath)) {
-    backup = await fs.readFile(officialBackupPath, "utf8");
-  } else if (await fileExists(`${configPath}.jokerdeck.bak`)) {
-    const legacyBackup = await fs.readFile(`${configPath}.jokerdeck.bak`, "utf8");
-    backup = looksLikeManagedProvider(legacyBackup) ? "" : legacyBackup;
-  }
-  if (!backup && !looksLikeManagedProvider(current)) return false;
-  if (!backup) {
-    try {
-      await fs.copyFile(configPath, officialBackupPath, { mode: 0o600 });
-    } catch {}
-    const header = "[model_providers.custom]";
-    const headerIndex = current.indexOf(header);
-    if (headerIndex < 0) return false;
-    const afterHeader = current.slice(headerIndex + header.length);
-    const nextHeader = afterHeader.search(/\n\[[^\n]+\]/);
-    const blockEnd = nextHeader >= 0
-      ? headerIndex + header.length + nextHeader
-      : current.length;
-    backup = `${current.slice(0, headerIndex)}${current.slice(blockEnd)}`
-      .replace(/^model_provider\s*=\s*["']custom["']\s*$/m, "")
-      .replace(/\n{3,}/g, "\n\n")
-      .trimStart();
-  }
-  const temporaryPath = `${configPath}.jokerdeck.official.tmp`;
-  await fs.writeFile(temporaryPath, backup, { mode: 0o600 });
-  await fs.rename(temporaryPath, configPath);
-  return true;
+  return restoreOriginalCodexConfig(path.join(home, "config.toml"));
 }
 
 async function readConfiguredKey() {
@@ -740,33 +782,33 @@ async function readConfiguredClaudeEndpoint() {
   }
 }
 
-async function launchCodex(proxy = "", detectedExecutable = "") {
+async function macCodexExecutable() {
+  for (const directory of ["/Applications", path.join(os.homedir(), "Applications")]) {
+    for (const name of ["Codex", "ChatGPT"]) {
+      const executable = path.join(directory, `${name}.app`, "Contents", "MacOS", name);
+      if (await fileExists(executable)) return executable;
+    }
+  }
+  throw new Error("找不到 Codex/ChatGPT 桌面应用");
+}
+
+async function windowsCodexExecutable() {
+  for (const candidate of windowsCodexAppCandidates(process.env)) {
+    if (await fileExists(candidate)) return candidate;
+  }
+  throw new Error("找不到 Codex/ChatGPT 桌面应用");
+}
+
+async function launchCodex(proxy = "") {
   const args = proxy ? [proxyServerArgument(proxy)] : [];
   if (proxy) {
     const address = normalizeLocalProxy(proxy);
-    const env = {
-      ...process.env,
-      HTTP_PROXY: address,
-      HTTPS_PROXY: address,
-      ALL_PROXY: address,
-      http_proxy: address,
-      https_proxy: address,
-      all_proxy: address,
-    };
+    const env = proxiedDesktopEnvironment(address);
     let executable;
     if (process.platform === "darwin") {
-      const result = await runDetailed("osascript", ["-e", 'POSIX path of (path to application "ChatGPT")'], 10000);
-      if (!result.ok) throw new Error("找不到 ChatGPT/Codex 应用");
-      executable = path.join(result.output.replace(/\/$/, ""), "Contents", "MacOS", "ChatGPT");
-      if (!(await fileExists(executable))) throw new Error("找不到 Codex 应用主程序");
+      executable = await macCodexExecutable();
     } else if (process.platform === "win32") {
-      executable = detectedExecutable || "codex.exe";
-      for (const candidate of detectedExecutable ? [] : windowsCodexAppCandidates(process.env)) {
-        if (await fileExists(candidate)) {
-          executable = candidate;
-          break;
-        }
-      }
+      executable = await windowsCodexExecutable();
     } else executable = "codex";
     await new Promise((resolve, reject) => {
       const child = spawn(executable, args, { env, detached: true, stdio: "ignore", windowsHide: true });
@@ -776,18 +818,12 @@ async function launchCodex(proxy = "", detectedExecutable = "") {
     return;
   }
   if (process.platform === "darwin") {
-    const result = await runDetailed("open", ["-a", "ChatGPT", ...(args.length ? ["--args", ...args] : [])], 15000);
+    const result = await runDetailed("open", ["-a", path.dirname(path.dirname(path.dirname(await macCodexExecutable()))), ...(args.length ? ["--args", ...args] : [])], 15000);
     if (!result.ok) throw new Error(result.output || "Codex 启动失败");
     return;
   }
   if (process.platform === "win32") {
-    let executable = detectedExecutable || "codex.exe";
-    for (const candidate of detectedExecutable ? [] : windowsCodexAppCandidates(process.env)) {
-      if (await fileExists(candidate)) {
-        executable = candidate;
-        break;
-      }
-    }
+    const executable = await windowsCodexExecutable();
     return spawn("cmd.exe", ["/c", "start", "", executable, ...args], {
       detached: true,
       stdio: "ignore",
@@ -899,6 +935,8 @@ ipcMain.handle("set-login-preference", async (_event, rememberLogin) => {
   return true;
 });
 ipcMain.handle("logout", async () => {
+  logsUnlocked = false;
+  sessionEpoch += 1;
   const session = await readSession();
   nodeRuntime?.disconnect();
   await writeSession({
@@ -951,7 +989,14 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
   const endpoint = tool === "codex"
     ? normalizeOpenAiEndpoint(preferences.selectedEndpoint?.endpoint, preferences.useV1 !== false)
     : (preferences.selectedEndpoint?.endpoint || "https://jokerdeck.de5.net");
-  if (session.integrations?.computerUse?.[tool]) await configureComputerUse(tool, true);
+  let mcpWarning = "";
+  if (session.integrations?.computerUse?.[tool]) {
+    try {
+      await configureComputerUse(tool, true);
+    } catch (error) {
+      mcpWarning = `本地桌面控制 MCP 未启用：${error.message || error}`;
+    }
+  }
   let configPath;
   if (tool === "claude") {
     configPath = await updateClaudeConfig({ endpoint, apiKey: preferences.apiKey });
@@ -998,6 +1043,7 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
     endpoint,
     mode: officialCodex ? "official-node-relay" : "relay",
     apiKey: preferences.apiKey || "",
+    mcpWarning,
     apiKeyPrefix: preferences.apiKey ? `${preferences.apiKey.slice(0, 6)}…${preferences.apiKey.slice(-4)}` : "",
     configPath,
   };
@@ -1062,6 +1108,7 @@ ipcMain.handle("health-check", async (_event, endpoints) =>
 ipcMain.handle("capabilities", detectCapabilities);
 ipcMain.handle("node-status", () => getNodeRuntime().status());
 ipcMain.handle("node-connect", async () => {
+  proxyPaused = false;
   const session = await validSession();
   const runtime = getNodeRuntime();
   runtime.setPolicy(await getNodePolicy(session.token));
@@ -1069,24 +1116,77 @@ ipcMain.handle("node-connect", async () => {
   return { ...status, codexRunning: await codexIsRunning() };
 });
 ipcMain.handle("node-refresh", async () => {
+  proxyPaused = false;
   const session = await validSession();
   const runtime = getNodeRuntime();
   runtime.setPolicy(await getNodePolicy(session.token));
   return runtime.connect();
 });
 ipcMain.handle("node-disconnect", () => getNodeRuntime().disconnect());
+ipcMain.handle("codex-restore-status", () =>
+  hasOriginalCodexBackup(path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "config.toml")));
+ipcMain.handle("restore-codex-config", async () => {
+  const configPath = path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "config.toml");
+  if (!(await hasOriginalCodexBackup(configPath)))
+    throw new Error("找不到 Jokerdeck 写入前的原配置备份，未修改现有文件");
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: "warning",
+    title: "恢复 Codex 原配置",
+    message: "恢复 Jokerdeck 修改前的 Codex 配置？",
+    detail: "将关闭正在运行的 Codex，停止本机代理，并另存当前 config.toml；官方登录数据和中转账号不受影响。",
+    buttons: ["取消", "恢复原配置"],
+    defaultId: 0,
+    cancelId: 0,
+  });
+  if (response !== 1) return { cancelled: true };
+  await safeLog("restore", "active");
+  try {
+    if (await codexIsRunning()) await quitRunningCodex();
+    proxyPaused = true;
+    sessionEpoch += 1;
+    nodeRuntime?.disconnect();
+    const result = await restoreOfficialCodexConfig();
+    if (result.restored) {
+      managedCodexLaunch = false;
+      const session = await readSession();
+      if (session.activeConfig?.tool === "codex")
+        await writeSession({ ...session, activeConfig: null });
+    }
+    await safeLog("restore", "done");
+    return result;
+  } catch (error) {
+    await safeLog("restore", "failed");
+    throw error;
+  }
+});
 ipcMain.handle("launch-codex", async (_event, { localized, officialNetwork } = {}) => {
+  await safeLog("start", "active");
   const codex = await detectCodex();
   if (!codex.installed) throw new Error("未检测到 Codex，请先安装官方客户端");
+  if (process.platform === "win32") await windowsCodexExecutable();
+  if (process.platform === "darwin") await macCodexExecutable();
   if (officialNetwork) {
+    await safeLog("proxy", "active");
+    proxyPaused = false;
     const session = await validSession();
     const runtime = getNodeRuntime();
     runtime.setPolicy(await getNodePolicy(session.token));
     const status = await runtime.connect();
-    return launchProxiedCodex(`127.0.0.1:${status.port}`, localized !== false, codex.command);
+    const result = await launchProxiedCodex(`127.0.0.1:${status.port}`, localized !== false, codex.command);
+    await safeLog("proxy", result.cancelled ? "failed" : "done");
+    if (result.started) managedCodexLaunch = true;
+    if (result.started) await safeLog("start", "done");
+    return result;
   }
-  if (localized !== false) return launchLocalizedCodex();
+  if (localized !== false) {
+    const result = await launchLocalizedCodex();
+    if (result.started) managedCodexLaunch = true;
+    if (result.started) await safeLog("start", "done");
+    return result;
+  }
   await launchCodex("", codex.command);
+  managedCodexLaunch = true;
+  await safeLog("start", "done");
   return { started: true, localized: false };
 });
 ipcMain.handle("launch-claude", async () => {
@@ -1100,13 +1200,32 @@ ipcMain.handle("open-url", (_event, url) => shell.openExternal(url));
 ipcMain.handle("check-update", checkUpdate);
 ipcMain.handle("download-update", downloadUpdate);
 ipcMain.handle("app-version", () => app.getVersion());
+ipcMain.handle("logs-unlock", async (_event, password) => {
+  logsUnlocked = await getDiagnostics().verifyPassword(String(password || ""));
+  return logsUnlocked;
+});
+ipcMain.handle("logs-lock", () => { logsUnlocked = false; return true; });
+ipcMain.handle("logs-entries", async () => {
+  if (!logsUnlocked) throw new Error("请先解锁日志");
+  return getDiagnostics().entries();
+});
+ipcMain.handle("logs-change-password", async (_event, { oldPassword, newPassword } = {}) => {
+  if (!logsUnlocked) throw new Error("请先解锁日志");
+  const changed = await getDiagnostics().changePassword(String(oldPassword || ""), String(newPassword || ""));
+  if (changed) logsUnlocked = false;
+  return changed;
+});
+ipcMain.handle("logs-event", async (_event, { event: name, status } = {}) => {
+  await getDiagnostics().append(name, status);
+  return true;
+});
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 760,
-    height: 540,
-    minWidth: 640,
-    minHeight: 500,
+    width: 700,
+    height: 680,
+    minWidth: 580,
+    minHeight: 540,
     autoHideMenuBar: process.platform === "win32",
     title: "Jokerdeck Switch",
     icon: path.join(__dirname, "..", "assets", "icon.png"),
@@ -1123,10 +1242,75 @@ app.whenReady().then(() => {
   if (process.platform === "win32") Menu.setApplicationMenu(null);
   if (process.platform === "darwin")
     app.dock.setIcon(path.join(__dirname, "..", "assets", "icon.png"));
+  if (process.platform === "win32") {
+    tray = new Tray(nativeImage.createFromPath(path.join(__dirname, "..", "assets", "icon.png")));
+    tray.setToolTip("Jokerdeck Switch · 常驻代理");
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: "打开 Jokerdeck Switch", click: () => {
+        if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+        else mainWindow.show();
+      } },
+      { label: "退出（代理将停止）", click: () => app.quit() },
+    ]));
+    tray.on("double-click", () => {
+      if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+      else mainWindow.show();
+    });
+  }
   createWindow();
   void autoStartNode();
+  nodeSupervisor = setInterval(() => {
+    if (nodeSupervisorBusy || nodeRuntime?.connectPromise) return;
+    const status = nodeRuntime?.status();
+    if (!status?.connected || !status.officialReachable) {
+      void autoStartNode();
+      return;
+    }
+    void probeOfficialProxy(`127.0.0.1:${status.port}`, 8000).catch(() => {
+      if (nodeRuntime?.status().connected && nodeRuntime.status().port === status.port) {
+        nodeRuntime.officialReachable = false;
+        void autoStartNode();
+      }
+    });
+  }, 30000);
 });
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  if (process.platform !== "darwin" && process.platform !== "win32") app.quit();
 });
-app.on("before-quit", () => nodeRuntime?.disconnect());
+app.on("activate", () => {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+});
+app.on("before-quit", (event) => {
+  if (exitCleanupStarted) return;
+  event.preventDefault();
+  exitCleanupStarted = true;
+  quitting = true;
+  proxyPaused = true;
+  sessionEpoch += 1;
+  if (nodeSupervisor) clearInterval(nodeSupervisor);
+  void (async () => {
+    await safeLog("exit", "active");
+    let cleanupFailed = false;
+    try {
+      if (managedCodexLaunch && await codexIsRunning()) await quitRunningCodex();
+    } catch {
+      cleanupFailed = true;
+      console.warn("退出时关闭 Codex 失败");
+    }
+    try {
+      const result = await restoreOfficialCodexConfig();
+      if (result.restored) {
+        const session = await readSession();
+        if (session.activeConfig?.tool === "codex")
+          await writeSession({ ...session, activeConfig: null });
+      }
+    } catch {
+      cleanupFailed = true;
+      console.warn("退出时恢复 Codex 原配置失败；原始备份仍保留，可在客户端重试恢复");
+    } finally {
+      await safeLog("exit", cleanupFailed ? "failed" : "done");
+      nodeRuntime?.disconnect();
+      app.quit();
+    }
+  })();
+});

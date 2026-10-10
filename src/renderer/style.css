@@ -520,6 +520,9 @@ input:focus {
   margin: 7px 0 0;
   font-size: 11px;
 }
+#restore-status {
+  overflow-wrap: anywhere;
+}
 .config-panel {
   padding: 18px 22px;
 }
@@ -790,7 +793,7 @@ footer {
 
 /* Compact workbench layout: keep the primary setup flow visible without the extra chrome. */
 body {
-  min-width: 640px;
+  min-width: 580px;
 }
 .topbar {
   height: 46px;
@@ -862,6 +865,57 @@ input {
 .page-heading p:not(.eyebrow) {
   font-size: 11px;
 }
+.launch-dashboard {
+  min-height: 138px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 19px 21px;
+  margin-bottom: 12px;
+  border: 1px solid #27504d;
+  border-radius: 8px;
+  background: #193637;
+  color: #f5fbf9;
+}
+.launch-dashboard-copy { min-width: 0; }
+.launch-dashboard-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #90d8c7;
+  font-size: 11px;
+  font-weight: 700;
+}
+.launch-indicator {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: #75c7ab;
+}
+.launch-dashboard strong {
+  display: block;
+  margin: 9px 0 5px;
+  font-size: 21px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.launch-dashboard p {
+  margin: 0;
+  font-size: 11px;
+  color: #bad0cd;
+  overflow-wrap: anywhere;
+}
+.launch-dashboard .primary {
+  min-width: 190px;
+  min-height: 43px;
+  flex: none;
+  background: #2dbaa2;
+  color: #102e2e;
+  box-shadow: none;
+}
+.launch-dashboard .primary:hover { background: #55d4ba; }
 .icon-button {
   width: 30px;
   height: 30px;
@@ -958,13 +1012,23 @@ footer {
   font-size: 10px;
 }
 .launch-progress-panel {
-  width: min(420px, 100%);
-  padding: 18px;
+  width: min(488px, 100%);
+  padding: 20px;
 }
-.launch-steps,
+.launch-steps {
+  max-height: min(310px, 40vh);
+  overflow: auto;
+}
+.launch-step { padding-bottom: 9px; }
+.launch-step-title { font-size: 12px; }
+.launch-step-detail { font-size: 10px; }
 .launch-changes {
-  display: none;
+  margin-top: 12px;
+  max-height: 108px;
+  overflow: auto;
+  padding: 9px 12px;
 }
+.launch-progress-backdrop { padding: 12px; }
 .launch-progress-track {
   margin: 14px 0 8px;
 }
@@ -987,6 +1051,48 @@ footer {
   background: white;
   box-shadow: 0 20px 65px #10282b33;
 }
+.logs-panel {
+  width: min(540px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+}
+.logs-unlock { margin-top: 18px; }
+.logs-unlock .primary { margin-top: 16px; }
+.logs-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 15px;
+  font-size: 11px;
+}
+.logs-toolbar > div { display: flex; gap: 10px; flex: none; }
+.logs-list {
+  min-height: 120px;
+  max-height: min(310px, 38vh);
+  overflow: auto;
+  margin: 12px 0;
+  border-top: 1px solid #e1e9e8;
+  border-bottom: 1px solid #e1e9e8;
+}
+.log-entry {
+  display: grid;
+  grid-template-columns: 125px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid #edf1f0;
+  font-size: 11px;
+}
+.log-entry:last-child { border-bottom: 0; }
+.log-entry time { color: #758689; }
+.log-entry strong { font-weight: 650; color: #28494a; }
+.log-entry .log-failed { color: #b84d4d; }
+.logs-empty { padding: 22px 4px; color: #758689; font-size: 12px; }
+.logs-change { color: #31575a; font-size: 12px; }
+.logs-change summary { cursor: pointer; font-weight: 650; }
+.logs-change form { padding: 8px 0; }
+.logs-change label { margin: 9px 0; }
 .dialog-heading {
   display: flex;
   align-items: center;

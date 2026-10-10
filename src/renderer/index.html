@@ -78,12 +78,16 @@
         </section>
         <section id="setup-view" class="view hidden">
           <div class="page-heading">
-            <div>
-              <p class="eyebrow">配置中心</p>
-              <h1>选择你的工作分组</h1>
-              <p>选择分组和线路后即可启动。</p>
+            <div><p class="eyebrow">工作台</p><h1>Codex 启动</h1></div>
+            <button id="refresh" class="icon-button" title="刷新分组与线路" aria-label="刷新分组与线路">↻</button>
+          </div>
+          <div class="launch-dashboard" aria-live="polite">
+            <div class="launch-dashboard-copy">
+              <div class="launch-dashboard-label"><span class="launch-indicator"></span><span id="workbench-label">等待配置</span></div>
+              <strong id="workbench-status">选择分组后启动 Codex</strong>
+              <p id="selection-summary" class="muted">请选择一个分组</p>
             </div>
-            <button id="refresh" class="icon-button" title="刷新数据">↻</button>
+            <button id="launch" class="primary launch-button" disabled>配置并启动 Codex <span>→</span></button>
           </div>
           <div class="mode-tabs" role="tablist" aria-label="客户端">
             <button
@@ -144,6 +148,8 @@
                   <p id="node-status" class="muted integration-status hidden"></p>
                   <div id="node-delays" class="node-delay-list hidden" aria-live="polite"></div>
                   <p id="node-note" class="muted integration-status hidden">应用打开即启动代理，持续自动切换低延迟节点。</p>
+                  <button id="restore-codex" class="secondary wide hidden" type="button" disabled>恢复 Codex 原配置并关闭代理</button>
+                  <p id="restore-status" class="muted integration-status hidden" aria-live="polite"></p>
                   <label class="setting-choice"><span>本地桌面控制 MCP</span><input id="computer-use-setting" type="checkbox" /></label>
                   <p class="muted integration-status">此开关配置独立的本地 MCP。官方 Computer Use 的可用性由 ChatGPT 账号、组织和地区决定，请以官方设置为准。</p>
                   <button id="computer-use-permissions" class="secondary wide hidden">检查桌面权限</button>
@@ -165,13 +171,7 @@
               </div>
             </aside>
           </div>
-          <div class="bottom-bar">
-            <div id="selection-summary" class="muted">请选择一个分组</div>
-            <button id="launch" class="primary launch-button" disabled>
-              配置并启动 Codex <span>→</span>
-            </button>
-          </div>
-          <p id="setup-error" class="error"></p>
+          <p id="setup-error" class="error" role="status"></p>
         </section>
         <section id="success-view" class="view hidden success-view">
           <div class="success-mark">✓</div>
@@ -187,7 +187,7 @@
       </main>
       <footer>
         <span>jokerdeck switch · <span id="app-version">v0.3.7</span></span>
-        <div class="footer-actions"><button id="check-update" class="text-button">检查更新</button><button id="site-link" class="text-button">打开中转站</button></div>
+        <div class="footer-actions"><button id="log-trigger" class="text-button" type="button" title="打开受密码保护的本机日志">日志</button><button id="check-update" class="text-button">检查更新</button><button id="site-link" class="text-button">打开中转站</button></div>
       </footer>
     </div>
     <div id="launch-progress" class="launch-progress-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="launch-progress-title">
@@ -208,6 +208,28 @@
         </div>
         <p id="launch-progress-error" class="error"></p>
         <button id="launch-progress-close" class="secondary wide hidden" type="button">返回配置</button>
+      </div>
+    </div>
+    <div id="logs-dialog" class="dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="logs-title">
+      <div class="dialog-panel logs-panel">
+        <div class="dialog-heading"><h2 id="logs-title">本机运行日志</h2><button id="logs-close" class="icon-button" type="button" title="关闭日志" aria-label="关闭日志">×</button></div>
+        <form id="logs-unlock" class="logs-unlock">
+          <label>日志密码<input id="logs-password" type="password" autocomplete="off" required placeholder="输入密码解锁" /></label>
+          <button class="primary wide" type="submit">解锁日志</button>
+        </form>
+        <div id="logs-content" class="hidden">
+          <div class="logs-toolbar"><span class="muted">仅记录操作阶段和状态，不记录账号、密钥或密码</span><div><button id="logs-refresh" class="text-button" type="button">刷新</button><button id="logs-lock" class="text-button" type="button">锁定</button></div></div>
+          <div id="logs-list" class="logs-list" role="log" aria-live="polite"></div>
+          <details id="logs-change-section" class="logs-change"><summary>修改日志密码</summary>
+            <form id="logs-change-form">
+              <label>旧密码<input id="logs-old-password" type="password" autocomplete="off" required /></label>
+              <label>新密码<input id="logs-new-password" type="password" autocomplete="new-password" minlength="6" required /></label>
+              <label>确认新密码<input id="logs-confirm-password" type="password" autocomplete="new-password" minlength="6" required /></label>
+              <button class="secondary wide" type="submit">保存新密码</button>
+            </form>
+          </details>
+        </div>
+        <p id="logs-error" class="error" role="status"></p>
       </div>
     </div>
     <div id="update-dialog" class="dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="update-title">

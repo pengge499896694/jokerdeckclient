@@ -42,6 +42,8 @@ class NodeRuntime {
     this.nodeList = [];
     this.pinnedNode = "";
     this.connectPromise = null;
+    this.preferredPort = 0;
+    this.generation = 0;
   }
 
   status() {
@@ -64,23 +66,29 @@ class NodeRuntime {
 
   async connect() {
     if (this.connectPromise) return this.connectPromise;
-    this.connectPromise = this.connectInternal();
+    const promise = this.connectInternal(this.generation);
+    this.connectPromise = promise;
     try {
-      return await this.connectPromise;
+      return await promise;
     } finally {
-      this.connectPromise = null;
+      if (this.connectPromise === promise) this.connectPromise = null;
     }
   }
 
-  async connectInternal() {
+  assertActive(generation) {
+    if (generation !== this.generation) throw new Error("节点连接已取消");
+  }
+
+  async connectInternal(generation) {
     if (this.policy.enabled === false) throw new Error("节点服务已由管理员暂停");
     if (this.status().connected) {
       try {
         await this.measureAndSelectNode(this.nodeList, this.pinnedNode, this.controllerPort, this.port);
+        this.assertActive(generation);
         this.officialReachable = true;
         return this.status();
       } catch (error) {
-        this.officialReachable = false;
+        if (generation === this.generation) this.officialReachable = false;
         throw error;
       }
     }
@@ -97,6 +105,7 @@ class NodeRuntime {
     }
     if (responseUrl.protocol !== "https:") throw new Error("节点订阅发生了非 HTTPS 跳转");
     const source = await response.text();
+    this.assertActive(generation);
     const nodes = parseNodes(source, {
       disabled: this.policy.disabledNodes || [],
       countryCodes: this.policy.countryCodes,
@@ -104,12 +113,18 @@ class NodeRuntime {
     if (!nodes.length) throw new Error("当前订阅没有可用的候选节点");
     const pinnedNode = nodes.some((node) => node.name === this.policy.pinnedNode)
       ? this.policy.pinnedNode : "";
-    const port = await freePort();
-    const controllerPort = await freePort();
     const directory = path.join(this.userData, "node-runtime");
     await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+    if (!this.preferredPort) {
+      const saved = Number(await fs.readFile(path.join(directory, "port"), "utf8").catch(() => ""));
+      if (Number.isInteger(saved) && saved >= 1024 && saved <= 65535) this.preferredPort = saved;
+    }
+    this.assertActive(generation);
+    const port = this.preferredPort || await freePort();
+    const controllerPort = await freePort();
     const configPath = path.join(directory, "config.yaml");
     await fs.writeFile(configPath, buildCoreConfig(nodes, port, pinnedNode, controllerPort), { mode: 0o600 });
+    this.assertActive(generation);
     const child = spawn(executable, ["-d", directory, "-f", configPath], {
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
@@ -120,6 +135,10 @@ class NodeRuntime {
     child.stderr.on("data", (chunk) => { errorOutput = `${errorOutput}${chunk}`.slice(-2000); });
     this.child = child;
     this.port = port;
+    child.once("exit", () => {
+      if (this.child !== child) return;
+      this.officialReachable = false;
+    });
     this.controllerPort = controllerPort;
     this.nodes = nodes.length;
     this.nodeList = nodes;
@@ -127,25 +146,34 @@ class NodeRuntime {
     try {
       let lastError;
       for (let attempt = 0; attempt < 12; attempt++) {
+        this.assertActive(generation);
         if (spawnError || child.exitCode !== null || child.signalCode !== null) break;
         try {
           await checkLocalProxy(`127.0.0.1:${port}`, 3000);
+          this.assertActive(generation);
           await this.measureAndSelectNode(nodes, pinnedNode, controllerPort, port);
+          this.assertActive(generation);
           this.officialReachable = true;
+          this.preferredPort = port;
+          await fs.writeFile(path.join(directory, "port"), String(port), { mode: 0o600 });
+          this.assertActive(generation);
           return this.status();
         } catch (error) {
+          this.assertActive(generation);
           lastError = error;
         }
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
       throw new Error(spawnError?.message || errorOutput.trim() || lastError?.message || "节点无法连接 ChatGPT");
     } catch (error) {
-      this.disconnect();
+      if (generation === this.generation) this.disconnect();
       throw error;
     }
   }
 
   disconnect() {
+    this.generation += 1;
+    this.connectPromise = null;
     if (this.child && this.child.exitCode === null && this.child.signalCode === null) this.child.kill();
     this.child = null;
     this.port = 0;
@@ -206,6 +234,13 @@ class NodeRuntime {
       }
     }
     this.latencies = results;
+    if (this.selectedNode && this.status().connected) {
+      await this.controllerRequest("/proxies/JOKERDECK", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: this.selectedNode }),
+      });
+    }
     throw new Error("没有节点能访问官方站点，请更换订阅或稍后重试");
   }
 }

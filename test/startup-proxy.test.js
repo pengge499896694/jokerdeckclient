@@ -5,6 +5,7 @@ const {
   normalizeLocalProxy,
   systemProxySuggestion,
   proxyServerArgument,
+  proxiedDesktopEnvironment,
   checkLocalProxy,
   probeOfficialProxy,
 } = require("../src/startup-proxy");
@@ -21,6 +22,18 @@ test("uses a local system proxy and builds a Chromium argument", () => {
   assert.equal(systemProxySuggestion("DIRECT; PROXY 127.0.0.1:7877"), "http://127.0.0.1:7877");
   assert.equal(systemProxySuggestion("PROXY proxy.example.com:8080; DIRECT"), "");
   assert.equal(proxyServerArgument("127.0.0.1:7877"), "--proxy-server=http://127.0.0.1:7877");
+});
+
+test("desktop proxy environment overrides inherited bypasses for official domains", () => {
+  const base = { NO_PROXY: "chatgpt.com,*", no_proxy: "openai.com", OTHER: "keep" };
+  const env = proxiedDesktopEnvironment("127.0.0.1:7877", base);
+  assert.equal(env.HTTPS_PROXY, "http://127.0.0.1:7877");
+  assert.equal(env.https_proxy, env.HTTPS_PROXY);
+  assert.equal(env.ALL_PROXY, env.HTTPS_PROXY);
+  assert.equal(env.NO_PROXY, "localhost,127.0.0.1,::1");
+  assert.equal(env.no_proxy, env.NO_PROXY);
+  assert.equal(env.OTHER, "keep");
+  assert.equal(base.NO_PROXY, "chatgpt.com,*");
 });
 
 test("checks the proxy CONNECT response before launch", async (context) => {

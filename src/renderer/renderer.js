@@ -24,6 +24,8 @@ const state = {
   successKeyRevealed: false,
   capabilities: null,
   nodeStatus: { connected: false, port: 0, nodes: 0, latencies: [] },
+  restoreAvailable: false,
+  launching: false,
 };
 const currentTool = () => (state.category === "anthropic" ? "claude" : "codex");
 const currentAppName = () =>
@@ -45,8 +47,10 @@ const launchProgressSteps = [
   { id: "check", title: "检查客户端", detail: "确认目标客户端已安装且可以启动" },
   { id: "route", title: "选择最快线路", detail: "测试可用线路并选择响应最快的一条" },
   { id: "key", title: "准备分组密钥", detail: "读取已保存的密钥，必要时创建新的专用密钥" },
-  { id: "write", title: "写入本地配置", detail: "保存分组、线路和 API 配置，并保留备份" },
-  { id: "start", title: "重启并启动客户端", detail: "让新配置生效，然后打开目标客户端" },
+  { id: "write", title: "写入本地配置", detail: "备份原文件，写入分组与线路并校验" },
+  { id: "proxy", title: "连接官方代理", detail: "启动 Mihomo，检查官方服务可达性" },
+  { id: "localize", title: "准备中文界面", detail: "根据中文启动选项加载桌面启动器" },
+  { id: "start", title: "启动客户端", detail: "打开客户端并检查实际启动结果" },
 ];
 let launchProgressState = [];
 let nodeRefreshTimer = null;
@@ -120,6 +124,7 @@ function updateLaunchProgress(id, status, detail) {
   if (index < 0) return;
   launchProgressState[index].status = status;
   if (detail) launchProgressState[index].detail = detail;
+  window.jokerdeck.logEvent(id, status).catch(() => {});
   const completed = launchProgressState.filter((step) => step.status === "done").length;
   const active = launchProgressState.findIndex((step) => step.status === "active");
   const percent = status === "failed" ? Math.max(8, Math.round((completed / launchProgressState.length) * 100)) : Math.round(((completed + (active >= 0 ? 0.35 : 0)) / launchProgressState.length) * 100);
@@ -213,7 +218,7 @@ function renderCapabilities(data) {
   $("capabilities").innerHTML = [
     [
       "Codex",
-      data.codex.installed ? `已检测 ${data.codex.version || ""}` : "未检测到",
+      data.codex.desktopInstalled ? `已检测 ${data.codex.version || "桌面端"}` : "未检测到桌面应用",
     ],
     [
       "Claude Code",
@@ -239,6 +244,9 @@ function renderNodeStatus() {
   const delayList = $("node-delays");
   status.classList.toggle("hidden", currentTool() !== "codex");
   $("node-note").classList.toggle("hidden", currentTool() !== "codex" || !state.integrations.officialNetwork);
+  $("restore-codex").classList.toggle("hidden", currentTool() !== "codex");
+  $("restore-codex").disabled = !state.restoreAvailable;
+  $("restore-status").classList.toggle("hidden", currentTool() !== "codex");
   status.textContent = state.nodeStatus.connected
     ? `${state.nodeStatus.officialReachable ? "官方站点已连通" : "本机代理已启动"} · 当前 ${escapeHtml(state.nodeStatus.selectedNode || "自动选择")} ${state.nodeStatus.selectedLatency == null ? "" : `${state.nodeStatus.selectedLatency} ms`} · ${state.nodeStatus.nodes} 个候选`
     : "节点未连接";
@@ -248,11 +256,12 @@ function renderNodeStatus() {
     `<span class="node-delay ${entry.ok ? "good" : "bad"}">${escapeHtml(entry.name)} · ${entry.ok ? `${entry.latency} ms` : "不可用"}</span>`,
   ).join("");
   $("official-network-setting").checked = Boolean(state.integrations.officialNetwork);
+  renderWorkbenchStatus();
 }
-async function refreshNodeStatus(reprobe = false) {
+async function refreshNodeStatus() {
   if (currentTool() !== "codex" || !state.integrations.officialNetwork) return;
   try {
-    state.nodeStatus = reprobe ? await window.jokerdeck.nodeRefresh() : await window.jokerdeck.nodeStatus();
+    state.nodeStatus = await window.jokerdeck.nodeStatus();
     renderNodeStatus();
   } catch (error) {
     state.nodeStatus = { ...state.nodeStatus, connected: false, officialReachable: false };
@@ -262,19 +271,29 @@ async function refreshNodeStatus(reprobe = false) {
 }
 function startNodeRefresh() {
   if (nodeRefreshTimer) clearInterval(nodeRefreshTimer);
-  nodeRefreshTimer = setInterval(() => refreshNodeStatus(true), 15000);
+  nodeRefreshTimer = setInterval(() => refreshNodeStatus(), 15000);
 }
 function stopNodeRefresh() {
   if (nodeRefreshTimer) clearInterval(nodeRefreshTimer);
   nodeRefreshTimer = null;
 }
+function renderWorkbenchStatus() {
+  const proxy = currentTool() === "codex" && state.nodeStatus.connected;
+  const saved = state.activeConfig?.tool === currentTool() && Boolean(state.activeConfig?.endpoint);
+  $("workbench-label").textContent = state.launching ? "正在配置" : proxy
+    ? state.nodeStatus.officialReachable ? "官方代理在线" : "代理已启动"
+    : saved ? "配置已保存" : "等待配置";
+  $("workbench-status").textContent = state.launching ? "正在启动客户端" : saved
+    ? `${currentAppName()} 配置就绪` : `配置并启动 ${currentAppName()}`;
+}
 function updateSummary() {
-  const officialNetwork = currentTool() === "codex" && Boolean(state.integrations.officialNetwork);
   $("selection-summary").textContent = state.selectedGroup
     ? `${state.selectedGroup.name} · ${state.selectedEndpoint?.name || "线路自动选择"}`
-    : officialNetwork ? "官方 Codex · 保留原生登录和插件" : "请选择一个分组";
-  $("launch").disabled = !state.selectedGroup && !officialNetwork;
+    : "请选择一个分组";
+  const officialNetwork = currentTool() === "codex" && Boolean(state.integrations.officialNetwork);
+  $("launch").disabled = !state.selectedGroup || state.launching;
   $("launch").innerHTML = `配置并启动 ${currentAppName()} <span>→</span>`;
+  renderWorkbenchStatus();
 }
 function setCategory(category) {
   state.category = category;
@@ -329,17 +348,18 @@ async function loadSetup() {
   renderEndpoints();
   updateSummary();
   state.capabilities = await window.jokerdeck.capabilities();
+  state.restoreAvailable = await window.jokerdeck.codexRestoreStatus();
   state.nodeStatus = await window.jokerdeck.nodeStatus();
   renderCapabilities(state.capabilities);
   renderNodeStatus();
   if (currentTool() === "codex" && state.integrations.officialNetwork) {
     try {
       state.nodeStatus = await window.jokerdeck.nodeConnect();
-      startNodeRefresh();
       renderNodeStatus();
     } catch (error) {
       $("integration-status").textContent = errorText(error);
     }
+    startNodeRefresh();
   }
   await chooseFastestEndpoint(false);
   const savedConfig = state.activeConfig?.category === state.category ? state.activeConfig : null;
@@ -352,9 +372,7 @@ async function loadSetup() {
     state.configured = {
       ...state.configured,
       ...(savedConfig || {}),
-      endpoint: actualConfig.endpoint || savedConfig?.endpoint || (currentTool() === "codex"
-        ? `${state.selectedEndpoint?.endpoint || "https://jokerdeck.de5.net"}${state.useV1 && !state.selectedEndpoint?.endpoint?.replace(/\/+$/, "").endsWith("/v1") ? "/v1" : ""}`
-        : (state.selectedEndpoint?.endpoint || "")),
+      endpoint: actualConfig.endpoint || savedConfig?.endpoint || (currentTool() === "codex" ? "" : (state.selectedEndpoint?.endpoint || "")),
       route: savedConfig?.route || state.selectedEndpoint?.endpoint || "",
       apiKey: actualConfig.apiKey || configuredKey || "",
       group: state.selectedGroups[state.category].name,
@@ -400,10 +418,7 @@ $("official-network-setting").addEventListener("change", async () => {
       $("integration-status").textContent = "代理保持开启。";
     }
   } catch (error) {
-    if (enabled) {
-      try { state.nodeStatus = await window.jokerdeck.nodeDisconnect(); } catch {}
-      stopNodeRefresh();
-    }
+    startNodeRefresh();
     $("integration-status").textContent = errorText(error);
   } finally {
     checkbox.disabled = true;
@@ -428,6 +443,31 @@ $("computer-use-setting").addEventListener("change", async () => {
   } finally {
     checkbox.checked = Boolean(state.integrations.computerUse?.[currentTool()]);
     checkbox.disabled = !state.capabilities?.computerUseMcp;
+  }
+});
+$("restore-codex").addEventListener("click", async () => {
+  const button = $("restore-codex");
+  button.disabled = true;
+  $("restore-status").textContent = "正在恢复原配置…";
+  try {
+    const result = await window.jokerdeck.restoreCodexConfig();
+    if (result.cancelled) {
+      $("restore-status").textContent = "已取消恢复";
+      return;
+    }
+    state.restoreAvailable = false;
+    state.activeConfig = null;
+    state.configured = { ...state.configured, endpoint: "", apiKey: "", configPath: "" };
+    state.nodeStatus = await window.jokerdeck.nodeStatus();
+    renderConfigured();
+    renderNodeStatus();
+    $("restore-status").textContent = result.savedPath
+      ? `原配置已恢复；修改前的当前文件另存于 ${result.savedPath}`
+      : "原配置已恢复；Jokerdeck 创建的配置文件已移除";
+  } catch (error) {
+    $("restore-status").textContent = errorText(error);
+  } finally {
+    button.disabled = !state.restoreAvailable;
   }
 });
 $("computer-use-permissions").addEventListener("click", async () => {
@@ -514,6 +554,7 @@ $("logout").addEventListener("click", async () => {
   try {
     await window.jokerdeck.logout();
     state.catalog = null;
+    closeLogs();
     state.selectedGroup = null;
     state.selectedGroups = {};
     state.tempToken = null;
@@ -602,14 +643,16 @@ $("launch").addEventListener("click", async () => {
   $("setup-error").textContent = "";
   $("launch").disabled = true;
   $("launch").innerHTML = "正在配置…";
+  state.launching = true;
+  renderWorkbenchStatus();
   const tool = currentTool();
   let currentStep = "check";
   openLaunchProgress(tool);
   try {
     updateLaunchProgress("check", "active", `正在检查 ${currentAppName()} 是否可用`);
     const capabilities = await window.jokerdeck.capabilities();
-    if (!capabilities[tool].installed)
-      throw new Error(`未检测到 ${currentAppName()}，请先安装官方客户端`);
+    if (!capabilities[tool].installed || (tool === "codex" && !capabilities.codex.desktopInstalled))
+      throw new Error(`未检测到 ${currentAppName()} 桌面应用，请先安装官方客户端`);
     updateLaunchProgress("check", "done", capabilities[tool].version ? `已检测到 ${capabilities[tool].version}` : "客户端已安装");
 
     currentStep = "route";
@@ -675,17 +718,35 @@ $("launch").addEventListener("click", async () => {
       requiresOpenAiAuth: false,
     };
     state.configured = { ...state.activeConfig };
+    if (tool === "codex") state.restoreAvailable = await window.jokerdeck.codexRestoreStatus();
     renderConfigured();
+    renderNodeStatus();
+    if (saved?.mcpWarning) addLaunchChange(saved.mcpWarning);
     updateLaunchProgress("write", "done", saved?.configPath ? `已写入 ${saved.configPath} · ${saved.endpoint}` : `本地配置已写入 · ${saved?.endpoint || "默认地址"}`);
     addLaunchChange(`${state.selectedGroup?.name || "官方 Codex"} · ${state.selectedEndpoint?.name || "默认线路"}`);
     if (saved?.configPath) addLaunchChange(`配置文件：${saved.configPath}`);
 
+    currentStep = "proxy";
+    if (tool === "codex" && officialNetwork) {
+      updateLaunchProgress("proxy", "active", "正在启动 Mihomo 并探测官方服务");
+      state.nodeStatus = await window.jokerdeck.nodeConnect();
+      renderNodeStatus();
+      if (!state.nodeStatus.connected) throw new Error("官方代理未连接，请检查节点订阅和本机代理");
+      updateLaunchProgress("proxy", "done", state.nodeStatus.officialReachable
+        ? `官方服务已连通 · ${state.nodeStatus.selectedNode || "自动选择"}`
+        : "本机代理已启动；官方服务连通性待重试");
+    } else updateLaunchProgress("proxy", "done", "当前模式不需要启动官方代理");
+
+    currentStep = "localize";
+    const localizationRequested = tool === "codex" && state.integrations.localization !== false && capabilities.localizationHelper;
+    updateLaunchProgress("localize", "active", localizationRequested ? "正在准备 Codex 中文启动器" : "保持客户端原语言");
+    updateLaunchProgress("localize", "done", localizationRequested ? "已选择中文启动器；正在验证实际启动结果" : "本次不启用汉化");
     currentStep = "start";
-    updateLaunchProgress("start", "active", `正在启动 ${currentAppName()}`);
+    updateLaunchProgress("start", "active", `正在启动 ${currentAppName()}，可能需要先关闭已运行的窗口`);
     const launchResult = tool === "claude"
       ? await window.jokerdeck.launchClaude()
       : await window.jokerdeck.launchCodex({
-          localized: state.integrations.localization !== false,
+          localized: localizationRequested,
           officialNetwork: Boolean(state.integrations.officialNetwork),
         });
     state.nodeStatus = await window.jokerdeck.nodeStatus();
@@ -694,28 +755,31 @@ $("launch").addEventListener("click", async () => {
       updateLaunchProgress("start", "failed", "已保存配置，但你取消了重启");
       finishLaunchProgress(false, "配置已经保存；关闭此窗口后可再次点击启动，让新配置生效。");
       $("setup-error").textContent = "已保存配置；已取消重启 Codex。";
-      $("launch").disabled = false;
-      $("launch").innerHTML = `配置并启动 ${currentAppName()} <span>→</span>`;
+      state.launching = false;
       updateSummary();
       return;
     }
+    updateLaunchProgress("localize", "done", localizationRequested
+      ? launchResult?.localized ? "Codex 中文界面已生效" : "Codex 已启动，中文界面未验证；可查看启动器提示"
+      : "本次不启用汉化");
     updateLaunchProgress("start", "done", `${currentAppName()} 已启动`);
     finishLaunchProgress(true);
     await new Promise((resolve) => setTimeout(resolve, 280));
     $("launch-progress").classList.add("hidden");
     $("success-text").textContent =
-      `${state.selectedGroup?.name || "官方 Codex"} 已保存，${officialNetwork ? "模型请求使用中转配置，网络出口使用常驻代理" : `${state.selectedEndpoint?.name || "默认线路"} 已写入 ${saved?.configPath || "本地配置"}`}，正在打开 ${currentAppName()}。${launchResult?.warning || ""}`;
+      `${state.selectedGroup?.name || "官方 Codex"} 已保存，${officialNetwork ? "模型请求使用中转配置，网络出口使用常驻代理" : `${state.selectedEndpoint?.name || "默认线路"} 已写入 ${saved?.configPath || "本地配置"}`}，正在打开 ${currentAppName()}。${[saved?.mcpWarning, launchResult?.warning].filter(Boolean).join(" ")}`;
     renderSuccessConfig();
     $("success-view").querySelector("h1").textContent =
       `${currentAppName()} 正在启动`;
     $("launch-again").innerHTML = `再次启动 ${currentAppName()} <span>→</span>`;
+    state.launching = false;
+    updateSummary();
     show("success-view");
   } catch (error) {
     $("setup-error").textContent = errorText(error);
     updateLaunchProgress(currentStep, "failed", errorText(error));
     finishLaunchProgress(false, errorText(error));
-    $("launch").disabled = false;
-    $("launch").innerHTML = `配置并启动 ${currentAppName()} <span>→</span>`;
+    state.launching = false;
     updateSummary();
   }
 });
@@ -786,7 +850,7 @@ $("copy-config").addEventListener("click", async () => {
       `group=${state.configured.group || state.selectedGroup?.name || ""}`,
       `route=${state.configured.route || state.selectedEndpoint?.endpoint || ""}`,
       `endpoint=${state.configured.endpoint || ""}`,
-      `api_key=${state.configured.apiKey || ""}`,
+      `api_key=${maskSecret(state.configured.apiKey)}`,
       `provider=${state.configured.provider || "custom"}`,
       `wire_api=${state.configured.wireApi || "responses"}`,
       `requires_openai_auth=${Boolean(state.configured.requiresOpenAiAuth)}`,
@@ -795,5 +859,106 @@ $("copy-config").addEventListener("click", async () => {
     $("integration-status").textContent = "诊断信息已复制";
   } catch {
     $("integration-status").textContent = "复制失败，请检查系统剪贴板权限";
+  }
+});
+
+const logStageNames = {
+  check: "检查客户端", route: "选择线路", key: "准备密钥", write: "写入配置",
+  proxy: "连接代理", localize: "启动汉化", start: "启动客户端",
+  restore: "恢复原配置", exit: "退出清理",
+};
+const logStatusNames = { active: "进行中", done: "完成", failed: "失败" };
+function lockLogs() {
+  $("logs-content").classList.add("hidden");
+  $("logs-unlock").classList.remove("hidden");
+  $("logs-list").replaceChildren();
+  $("logs-password").value = "";
+  $("logs-change-form").reset();
+  $("logs-change-section").open = false;
+  void window.jokerdeck.lockLogs().catch(() => {});
+}
+function closeLogs() {
+  $("logs-dialog").classList.add("hidden");
+  $("logs-error").textContent = "";
+  lockLogs();
+}
+async function refreshLogs() {
+  const entries = await window.jokerdeck.logsEntries();
+  $("logs-list").replaceChildren();
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "logs-empty";
+    empty.textContent = "暂无本机运行记录";
+    $("logs-list").append(empty);
+  }
+  for (const entry of entries.slice().reverse()) {
+    const row = document.createElement("div");
+    row.className = "log-entry";
+    const time = document.createElement("time");
+    time.textContent = new Date(entry.timestamp).toLocaleString("zh-CN", { hour12: false });
+    const label = document.createElement("strong");
+    label.textContent = logStageNames[entry.event] || "客户端事件";
+    const status = document.createElement("span");
+    status.textContent = logStatusNames[entry.status] || "已记录";
+    if (entry.status === "failed") status.className = "log-failed";
+    row.append(time, label, status);
+    $("logs-list").append(row);
+  }
+}
+$("log-trigger").addEventListener("click", () => {
+  $("logs-error").textContent = "";
+  $("logs-dialog").classList.remove("hidden");
+  $("logs-password").focus();
+});
+$("logs-close").addEventListener("click", closeLogs);
+$("logs-dialog").addEventListener("click", (event) => {
+  if (event.target === $("logs-dialog")) closeLogs();
+});
+$("logs-lock").addEventListener("click", lockLogs);
+$("logs-refresh").addEventListener("click", async () => {
+  try { await refreshLogs(); } catch (error) { $("logs-error").textContent = errorText(error); }
+});
+$("logs-unlock").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button");
+  button.disabled = true;
+  $("logs-error").textContent = "";
+  try {
+    const unlocked = await window.jokerdeck.unlockLogs($("logs-password").value);
+    $("logs-password").value = "";
+    if ($("logs-dialog").classList.contains("hidden")) {
+      await window.jokerdeck.lockLogs();
+      return;
+    }
+    if (!unlocked) throw new Error("日志密码不正确");
+    await refreshLogs();
+    $("logs-unlock").classList.add("hidden");
+    $("logs-content").classList.remove("hidden");
+  } catch (error) {
+    $("logs-error").textContent = errorText(error);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("logs-change-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button");
+  const oldPassword = $("logs-old-password").value;
+  const newPassword = $("logs-new-password").value;
+  $("logs-error").textContent = "";
+  if (newPassword !== $("logs-confirm-password").value) {
+    $("logs-error").textContent = "两次输入的新密码不一致";
+    return;
+  }
+  button.disabled = true;
+  try {
+    if (!await window.jokerdeck.changeLogsPassword({ oldPassword, newPassword }))
+      throw new Error("旧密码不正确");
+    lockLogs();
+    $("logs-error").textContent = "密码已更新，请用新密码重新解锁";
+  } catch (error) {
+    $("logs-error").textContent = errorText(error);
+  } finally {
+    button.disabled = false;
   }
 });

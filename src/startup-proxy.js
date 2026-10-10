@@ -34,6 +34,16 @@ function proxyServerArgument(input) {
   return `--proxy-server=${normalizeLocalProxy(input)}`;
 }
 
+function proxiedDesktopEnvironment(input, base = process.env) {
+  const address = normalizeLocalProxy(input);
+  return {
+    ...base,
+    HTTP_PROXY: address, HTTPS_PROXY: address, ALL_PROXY: address,
+    http_proxy: address, https_proxy: address, all_proxy: address,
+    NO_PROXY: "localhost,127.0.0.1,::1", no_proxy: "localhost,127.0.0.1,::1",
+  };
+}
+
 function checkLocalProxy(input, timeout = 5000) {
   const url = new URL(normalizeLocalProxy(input));
   return new Promise((resolve, reject) => {
@@ -115,4 +125,4 @@ function probeOfficialProxy(input, timeout = 10000) {
   });
 }
 
-module.exports = { normalizeLocalProxy, systemProxySuggestion, proxyServerArgument, checkLocalProxy, probeOfficialProxy };
+module.exports = { normalizeLocalProxy, systemProxySuggestion, proxyServerArgument, proxiedDesktopEnvironment, checkLocalProxy, probeOfficialProxy };

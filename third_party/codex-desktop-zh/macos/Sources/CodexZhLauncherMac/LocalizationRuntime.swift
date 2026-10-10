@@ -169,7 +169,7 @@ struct LocalizationRuntime {
     private func verifyLocale(port: UInt16, locale: String) async throws -> String {
         let selected = try await waitForRendererTarget(
             port: port,
-            timeout: 12,
+            timeout: 30,
             requireBridge: false,
             requireContent: true,
             requireAppRoot: true

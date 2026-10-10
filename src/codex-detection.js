@@ -51,6 +51,13 @@ function windowsCodexAppCandidates(env = process.env) {
   ]);
 }
 
+function windowsCodexCliCandidates(discovered = [], env = process.env) {
+  const desktopApps = new Set(windowsCodexAppCandidates(env).map((candidate) => candidate.toLowerCase()));
+  return unique([...discovered, ...windowsCodexCandidates(env)])
+    .filter((candidate) => !desktopApps.has(candidate.toLowerCase()))
+    .sort((left, right) => Number(/\.(?:cmd|bat)$/i.test(left)) - Number(/\.(?:cmd|bat)$/i.test(right)));
+}
+
 function parseWindowsCommandPaths(output) {
   return unique(
     String(output || "")
@@ -78,4 +85,5 @@ module.exports = {
   unique,
   windowsCodexAppCandidates,
   windowsCodexCandidates,
+  windowsCodexCliCandidates,
 };
