@@ -81,7 +81,7 @@
             <div>
               <p class="eyebrow">配置中心</p>
               <h1>选择你的工作分组</h1>
-              <p>官方模式保留 Codex 原生登录和插件；中转模式才会创建专用 API Key。</p>
+              <p>可通过官方节点启动以解锁插件，同时让模型请求走你选择的中转地址。</p>
             </div>
             <button id="refresh" class="icon-button" title="刷新数据">↻</button>
           </div>
@@ -143,7 +143,7 @@
                   <label id="official-network-option" class="setting-choice"><span>官方 Computer Use 节点</span><input id="official-network-setting" type="checkbox" /></label>
                   <p id="node-status" class="muted integration-status hidden"></p>
                   <div id="node-delays" class="node-delay-list hidden" aria-live="polite"></div>
-                  <p id="node-note" class="muted integration-status hidden">官方 Codex 保留原生登录和插件配置，只通过本机代理连接官方服务。</p>
+                  <p id="node-note" class="muted integration-status hidden">节点只在启动 Codex 时临时使用，启动完成后会关闭；模型请求仍按下方中转配置发送。</p>
                   <label class="setting-choice"><span>本地桌面控制 MCP</span><input id="computer-use-setting" type="checkbox" /></label>
                   <p class="muted integration-status">此开关配置独立的本地 MCP。官方 Computer Use 的可用性由 ChatGPT 账号、组织和地区决定，请以官方设置为准。</p>
                   <button id="computer-use-permissions" class="secondary wide hidden">检查桌面权限</button>
@@ -151,9 +151,16 @@
                 </div>
               </div>
               <div id="config-panel" class="panel config-panel hidden">
-                <div class="panel-title"><h2>当前配置</h2><span class="pill">排查信息</span></div>
-                <div class="config-detail"><span>请求地址</span><code id="configured-endpoint">未配置</code></div>
-                <div class="config-detail"><span>API Key</span><code id="configured-key">未配置</code><button id="reveal-key" class="text-button" type="button">显示</button></div>
+                <div class="panel-title"><h2>当前配置</h2><span class="pill">已写入客户端</span></div>
+                <div class="config-detail"><span>连接模式</span><code id="configured-mode">中转模式</code></div>
+                <div class="config-detail"><span>分组</span><code id="configured-group">未配置</code></div>
+                <div class="config-detail"><span>线路 URL</span><code id="configured-route">未配置</code></div>
+                <div class="config-detail"><span>请求 URL</span><code id="configured-endpoint">未配置</code></div>
+                <div class="config-detail"><span>API Key</span><code id="configured-key">未配置</code><button id="reveal-key" class="icon-button" type="button" title="显示或隐藏 API Key" aria-label="显示或隐藏 API Key">◉</button></div>
+                <div class="config-detail"><span>model_provider</span><code id="configured-provider">custom</code></div>
+                <div class="config-detail"><span>Wire API</span><code id="configured-wire-api">responses</code></div>
+                <div class="config-detail"><span>需要 OpenAI 登录</span><code id="configured-auth">false</code></div>
+                <div class="config-detail"><span>配置文件</span><code id="configured-path">未配置</code></div>
                 <button id="copy-config" class="secondary wide" type="button">复制诊断信息</button>
               </div>
             </aside>
@@ -171,6 +178,7 @@
           <p class="eyebrow">已准备就绪</p>
           <h1>Codex 正在启动</h1>
           <p id="success-text">本地配置已更新。</p>
+          <div id="success-config" class="success-config hidden" aria-live="polite"></div>
           <button id="launch-again" class="primary">
             再次启动 Codex <span>→</span></button
           ><button id="back-to-setup" class="text-button">返回配置</button>
@@ -181,6 +189,26 @@
         <span>jokerdeck switch · <span id="app-version">v0.3.7</span></span>
         <div class="footer-actions"><button id="check-update" class="text-button">检查更新</button><button id="site-link" class="text-button">打开中转站</button></div>
       </footer>
+    </div>
+    <div id="launch-progress" class="launch-progress-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="launch-progress-title">
+      <div class="launch-progress-panel">
+        <div class="launch-progress-heading">
+          <div>
+            <p class="eyebrow">启动配置</p>
+            <h2 id="launch-progress-title">正在准备客户端</h2>
+          </div>
+          <span id="launch-progress-percent" class="launch-progress-percent">0%</span>
+        </div>
+        <div class="launch-progress-track" aria-hidden="true"><span id="launch-progress-bar"></span></div>
+        <p id="launch-progress-detail" class="launch-progress-detail" aria-live="polite">正在开始…</p>
+        <ol id="launch-steps" class="launch-steps"></ol>
+        <div id="launch-changes" class="launch-changes hidden">
+          <strong>本次会改动</strong>
+          <ul id="launch-changes-list"></ul>
+        </div>
+        <p id="launch-progress-error" class="error"></p>
+        <button id="launch-progress-close" class="secondary wide hidden" type="button">返回配置</button>
+      </div>
     </div>
     <div id="update-dialog" class="dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="update-title">
       <div class="dialog-panel">

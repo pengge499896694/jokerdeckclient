@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, net, safeStorage, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, net, safeStorage, shell } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs/promises");
 const { createWriteStream, createReadStream } = require("node:fs");
@@ -308,11 +308,13 @@ async function getCatalog(token) {
   ]);
   const allowedIds = new Set(
     (Array.isArray(groups) ? groups : groups.groups || []).map((group) =>
-      typeof group === "number" ? group : group.id,
-    ),
+      typeof group === "object"
+        ? group.id ?? group.group_id ?? group.groupId
+        : group,
+    ).filter((id) => id !== undefined && id !== null).map(String),
   );
   const groupRows = (plaza.groups || [])
-    .filter((group) => !allowedIds.size || allowedIds.has(group.id))
+    .filter((group) => !allowedIds.size || allowedIds.has(String(group.id)))
     .map((group) => ({
       id: group.id,
       name: group.name,
@@ -329,13 +331,13 @@ async function getCatalog(token) {
           (entry) =>
             entry && entry.endpoint && /^https:\/\//.test(entry.endpoint),
         )
-          .map((entry) => {
+        .map((entry) => {
           const endpoint = new URL(entry.endpoint).href.replace(/\/$/, "");
           return [
             endpoint,
             {
               name:
-                entry.name
+                String(entry.name || "")
                   .replace(/GPT|Opus/g, "")
                   .replace(/[（）()]/g, "")
                   .trim() || new URL(endpoint).host,
@@ -388,8 +390,10 @@ async function detectCodex() {
   let candidates;
   if (process.platform === "win32") {
     const discovered = [];
-    const where = await runDetailed("where.exe", ["codex.exe"]);
-    discovered.push(...parseWindowsCommandPaths(where.output));
+    for (const command of ["codex.exe", "codex.cmd", "codex"]) {
+      const where = await runDetailed("where.exe", [command]);
+      discovered.push(...parseWindowsCommandPaths(where.output));
+    }
     for (const key of [
       "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\codex.exe",
       "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\codex.exe",
@@ -416,6 +420,12 @@ async function detectCodex() {
         command: candidate,
         version: result.output.trim().split("\n")[0],
       };
+  }
+  if (process.platform === "win32") {
+    for (const candidate of windowsCodexAppCandidates(process.env)) {
+      if (await fileExists(candidate))
+        return { installed: true, command: candidate, version: "桌面端已安装", desktop: true };
+    }
   }
   return { installed: false, command: null, version: "" };
 }
@@ -607,17 +617,21 @@ async function restoreOfficialCodexConfig() {
   const configPath = path.join(home, "config.toml");
   const officialBackupPath = `${configPath}.jokerdeck.official.bak`;
   const current = await fs.readFile(configPath, "utf8").catch(() => "");
-  const looksLikeJokerProvider = (value) =>
-    /experimental_bearer_token\s*=/.test(value) && /jokerdeck/i.test(value);
+  const looksLikeManagedProvider = (value) =>
+    /\[model_providers\.custom\]/.test(value) &&
+    /(?:base_url|experimental_bearer_token)\s*=/.test(value);
   let backup = "";
   if (await fileExists(officialBackupPath)) {
     backup = await fs.readFile(officialBackupPath, "utf8");
   } else if (await fileExists(`${configPath}.jokerdeck.bak`)) {
     const legacyBackup = await fs.readFile(`${configPath}.jokerdeck.bak`, "utf8");
-    backup = looksLikeJokerProvider(legacyBackup) ? "" : legacyBackup;
+    backup = looksLikeManagedProvider(legacyBackup) ? "" : legacyBackup;
   }
-  if (!backup && !looksLikeJokerProvider(current)) return false;
+  if (!backup && !looksLikeManagedProvider(current)) return false;
   if (!backup) {
+    try {
+      await fs.copyFile(configPath, officialBackupPath, { mode: 0o600 });
+    } catch {}
     const header = "[model_providers.custom]";
     const headerIndex = current.indexOf(header);
     if (headerIndex < 0) return false;
@@ -646,6 +660,20 @@ async function readConfiguredKey() {
       /^experimental_bearer_token\s*=\s*"((?:\\.|[^"\\])*)"/m,
     );
     return key ? JSON.parse(`"${key[1]}"`) : "";
+  } catch {
+    return "";
+  }
+}
+
+async function readConfiguredEndpoint() {
+  const home = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  try {
+    const config = await fs.readFile(path.join(home, "config.toml"), "utf8");
+    const block = config.match(/\[model_providers\.custom\]([^\[]*)/);
+    const value = block?.[1].match(
+      /^base_url\s*=\s*"((?:\\.|[^"\\])*)"/m,
+    );
+    return value ? JSON.parse(`"${value[1]}"`) : "";
   } catch {
     return "";
   }
@@ -690,7 +718,16 @@ async function readConfiguredClaudeKey() {
   }
 }
 
-async function launchCodex(proxy = "") {
+async function readConfiguredClaudeEndpoint() {
+  try {
+    const settings = JSON.parse(await fs.readFile(path.join(os.homedir(), ".claude", "settings.json"), "utf8"));
+    return settings.env?.ANTHROPIC_BASE_URL || "";
+  } catch {
+    return "";
+  }
+}
+
+async function launchCodex(proxy = "", detectedExecutable = "") {
   const args = proxy ? [proxyServerArgument(proxy)] : [];
   if (proxy) {
     const address = normalizeLocalProxy(proxy);
@@ -710,8 +747,8 @@ async function launchCodex(proxy = "") {
       executable = path.join(result.output.replace(/\/$/, ""), "Contents", "MacOS", "ChatGPT");
       if (!(await fileExists(executable))) throw new Error("找不到 Codex 应用主程序");
     } else if (process.platform === "win32") {
-      executable = "codex.exe";
-      for (const candidate of windowsCodexAppCandidates(process.env)) {
+      executable = detectedExecutable || "codex.exe";
+      for (const candidate of detectedExecutable ? [] : windowsCodexAppCandidates(process.env)) {
         if (await fileExists(candidate)) {
           executable = candidate;
           break;
@@ -731,8 +768,8 @@ async function launchCodex(proxy = "") {
     return;
   }
   if (process.platform === "win32") {
-    let executable = "codex.exe";
-    for (const candidate of windowsCodexAppCandidates(process.env)) {
+    let executable = detectedExecutable || "codex.exe";
+    for (const candidate of detectedExecutable ? [] : windowsCodexAppCandidates(process.env)) {
       if (await fileExists(candidate)) {
         executable = candidate;
         break;
@@ -747,7 +784,7 @@ async function launchCodex(proxy = "") {
   return spawn("codex", args, { detached: true, stdio: "ignore" }).unref();
 }
 
-async function launchProxiedCodex(proxy, localized) {
+async function launchProxiedCodex(proxy, localized, detectedExecutable = "") {
   if (await codexIsRunning()) {
     const { response } = await dialog.showMessageBox(mainWindow, {
       type: "question",
@@ -764,7 +801,7 @@ async function launchProxiedCodex(proxy, localized) {
     const result = await launchLocalizedCodex(proxy);
     return { ...result, warning: `${result.warning || ""} 请在 Codex 官方设置中确认 Computer Use 可用。`.trim() };
   }
-  await launchCodex(proxy);
+  await launchCodex(proxy, detectedExecutable);
   return { started: true, localized: false, warning: "请在 Codex 官方设置中确认 Computer Use 可用。" };
 }
 
@@ -898,14 +935,24 @@ ipcMain.handle("catalog", async () => {
 ipcMain.handle("save-preferences", async (_event, preferences) => {
   const session = await readSession();
   const tool = preferences.tool === "claude" ? "claude" : "codex";
+  const officialCodex = tool === "codex" && preferences.officialNetwork === true;
+  const usingRelay = true;
   const endpoint = tool === "codex"
     ? normalizeOpenAiEndpoint(preferences.selectedEndpoint?.endpoint, preferences.useV1 !== false)
     : (preferences.selectedEndpoint?.endpoint || "https://jokerdeck.de5.net");
   if (session.integrations?.computerUse?.[tool]) await configureComputerUse(tool, true);
-  if (tool === "claude")
-    await updateClaudeConfig({ endpoint, apiKey: preferences.apiKey });
-  else if (preferences.officialNetwork) await restoreOfficialCodexConfig();
-  else await updateCodexConfig({ endpoint, apiKey: preferences.apiKey });
+  let configPath;
+  if (tool === "claude") {
+    configPath = await updateClaudeConfig({ endpoint, apiKey: preferences.apiKey });
+  } else {
+    configPath = await updateCodexConfig({ endpoint, apiKey: preferences.apiKey });
+    const [writtenEndpoint, writtenKey] = await Promise.all([
+      readConfiguredEndpoint(),
+      readConfiguredKey(),
+    ]);
+    if (writtenEndpoint !== endpoint || !writtenKey || writtenKey !== preferences.apiKey)
+      throw new Error("Codex 配置写入校验失败，请重试；当前配置未确认生效");
+  }
   await writeSession({
     ...session,
     selectedGroups: preferences.selectedGroup
@@ -919,12 +966,29 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
     keyGroupIds: preferences.selectedGroup
       ? { ...(session.keyGroupIds || {}), [tool]: preferences.selectedGroup.id }
       : session.keyGroupIds || {},
+    activeConfig: preferences.selectedGroup
+      ? {
+          groupId: preferences.selectedGroup.id,
+          group: preferences.selectedGroup.name || "",
+          category: preferences.category || "openai",
+          tool,
+          mode: officialCodex ? "official-node-relay" : "relay",
+          route: preferences.selectedEndpoint?.endpoint || "",
+          endpoint,
+          configPath,
+          provider: "custom",
+          wireApi: tool === "codex" ? "responses" : "",
+          requiresOpenAiAuth: false,
+        }
+      : session.activeConfig || null,
     setupDone: true,
   });
   return {
     endpoint,
+    mode: officialCodex ? "official-node-relay" : "relay",
     apiKey: preferences.apiKey || "",
     apiKeyPrefix: preferences.apiKey ? `${preferences.apiKey.slice(0, 6)}…${preferences.apiKey.slice(-4)}` : "",
+    configPath,
   };
 });
 ipcMain.handle("create-key", async (_event, { groupId, name }) => {
@@ -944,8 +1008,24 @@ ipcMain.handle("create-key", async (_event, { groupId, name }) => {
 });
 ipcMain.handle("configured-key", async (_event, { groupId, tool }) => {
   const session = await readSession();
-  if (session.keyGroupIds?.[tool] !== groupId) return "";
+  if (session.keyGroupIds?.[tool] == null || String(session.keyGroupIds[tool]) !== String(groupId)) return "";
   return tool === "claude" ? readConfiguredClaudeKey() : readConfiguredKey();
+});
+ipcMain.handle("configured-config", async (_event, { tool } = {}) => {
+  const configPath = tool === "claude"
+    ? path.join(os.homedir(), ".claude", "settings.json")
+    : path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "config.toml");
+  if (tool === "claude") {
+    return { configPath, endpoint: await readConfiguredClaudeEndpoint(), apiKey: await readConfiguredClaudeKey() };
+  }
+  return {
+    configPath,
+    endpoint: await readConfiguredEndpoint(),
+    apiKey: await readConfiguredKey(),
+    provider: "custom",
+    wireApi: "responses",
+    requiresOpenAiAuth: false,
+  };
 });
 ipcMain.handle("health-check", async (_event, endpoints) =>
   Promise.all(
@@ -986,10 +1066,15 @@ ipcMain.handle("launch-codex", async (_event, { localized, officialNetwork } = {
     const runtime = getNodeRuntime();
     runtime.setPolicy(await getNodePolicy(session.token));
     const status = await runtime.connect();
-    return launchProxiedCodex(`127.0.0.1:${status.port}`, localized !== false);
+    try {
+      return await launchProxiedCodex(`127.0.0.1:${status.port}`, localized !== false, codex.command);
+    } finally {
+      // The node is only needed while handing the proxy settings to Codex.
+      runtime.disconnect();
+    }
   }
   if (localized !== false) return launchLocalizedCodex();
-  await launchCodex();
+  await launchCodex("", codex.command);
   return { started: true, localized: false };
 });
 ipcMain.handle("launch-claude", async () => {
@@ -1006,10 +1091,11 @@ ipcMain.handle("app-version", () => app.getVersion());
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1060,
-    height: 720,
-    minWidth: 860,
-    minHeight: 620,
+    width: 900,
+    height: 640,
+    minWidth: 760,
+    minHeight: 560,
+    autoHideMenuBar: process.platform === "win32",
     title: "Jokerdeck Switch",
     icon: path.join(__dirname, "..", "assets", "icon.png"),
     backgroundColor: "#f5f7f8",
@@ -1022,6 +1108,7 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
 }
 app.whenReady().then(() => {
+  if (process.platform === "win32") Menu.setApplicationMenu(null);
   if (process.platform === "darwin")
     app.dock.setIcon(path.join(__dirname, "..", "assets", "icon.png"));
   createWindow();

@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("jokerdeck", {
     ipcRenderer.invoke("save-preferences", preferences),
   createKey: (payload) => ipcRenderer.invoke("create-key", payload),
   configuredKey: (payload) => ipcRenderer.invoke("configured-key", payload),
+  configuredConfig: (payload) => ipcRenderer.invoke("configured-config", payload),
   healthCheck: (endpoints) => ipcRenderer.invoke("health-check", endpoints),
   capabilities: () => ipcRenderer.invoke("capabilities"),
   setIntegrations: (settings) => ipcRenderer.invoke("set-integrations", settings),
