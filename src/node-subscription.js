@@ -64,7 +64,7 @@ function buildCoreConfig(nodes, port, pinnedNode = "") {
       name: "JOKERDECK",
       type: pinnedNode ? "select" : "url-test",
       proxies: selected.map((node) => node.name),
-      ...(!pinnedNode ? { url: "https://www.gstatic.com/generate_204", interval: 180, tolerance: 50 } : {}),
+      ...(!pinnedNode ? { url: "https://chatgpt.com/cdn-cgi/trace", interval: 180, tolerance: 50 } : {}),
     }],
     rules: ["MATCH,JOKERDECK"],
   };

@@ -36,6 +36,7 @@ function getNodeRuntime() {
     root: app.isPackaged ? process.resourcesPath : path.join(__dirname, ".."),
     packaged: app.isPackaged,
     userData: app.getPath("userData"),
+    fetchImpl: networkFetch,
   });
   return nodeRuntime;
 }
@@ -340,9 +341,9 @@ function run(command, args = []) {
   );
 }
 
-function runDetailed(command, args, timeout = 15000) {
+function runDetailed(command, args, timeout = 15000, options = {}) {
   return new Promise((resolve) =>
-    execFile(command, args, { timeout, windowsHide: true }, (error, stdout, stderr) =>
+    execFile(command, args, { timeout, windowsHide: true, ...options }, (error, stdout, stderr) =>
       resolve({ ok: !error, code: error?.code || 0, output: (stdout || stderr || "").trim() }),
     ),
   );
@@ -484,7 +485,21 @@ async function codexIsRunning() {
   return false;
 }
 
-async function launchLocalizedCodex() {
+async function quitRunningCodex() {
+  if (process.platform === "darwin")
+    await runDetailed("osascript", ["-e", "tell application \"ChatGPT\" to quit"], 15000);
+  if (process.platform === "win32") {
+    await Promise.all([
+      runDetailed("taskkill.exe", ["/IM", "Codex.exe"], 15000),
+      runDetailed("taskkill.exe", ["/IM", "ChatGPT.exe"], 15000),
+    ]);
+  }
+  for (let attempt = 0; attempt < 15 && await codexIsRunning(); attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  if (await codexIsRunning()) throw new Error("Codex 尚未完全退出，请关闭后重试");
+}
+
+async function launchLocalizedCodex(proxy = "") {
   const executable = localizationHelper();
   if (!(await fileExists(executable))) throw new Error("中文启动组件缺失，请重新安装客户端");
   if (await codexIsRunning()) {
@@ -497,8 +512,16 @@ async function launchLocalizedCodex() {
       cancelId: 0,
     });
     if (response !== 1) return { cancelled: true };
+    await quitRunningCodex();
   }
-  const result = await runDetailed(executable, ["--launch-zh"], 120000);
+  const address = proxy ? normalizeLocalProxy(proxy) : "";
+  const env = address ? {
+    ...process.env,
+    HTTP_PROXY: address, HTTPS_PROXY: address, ALL_PROXY: address,
+    http_proxy: address, https_proxy: address, all_proxy: address,
+  } : process.env;
+  const args = ["--launch-zh", ...(address ? [proxyServerArgument(proxy)] : [])];
+  const result = await runDetailed(executable, args, 120000, { env });
   if (!result.ok && result.code !== 2)
     throw new Error(result.output || "中文启动失败，请检查 Codex 安装状态");
   return { started: true, localized: result.ok, warning: result.ok ? "" : "Codex 已启动，但中文界面未完全验证" };
@@ -651,7 +674,7 @@ async function launchCodex(proxy = "") {
   return spawn("codex", args, { detached: true, stdio: "ignore" }).unref();
 }
 
-async function launchProxiedCodex(proxy) {
+async function launchProxiedCodex(proxy, localized) {
   if (await codexIsRunning()) {
     const { response } = await dialog.showMessageBox(mainWindow, {
       type: "question",
@@ -662,15 +685,14 @@ async function launchProxiedCodex(proxy) {
       cancelId: 0,
     });
     if (response !== 1) return { cancelled: true };
-    if (process.platform === "darwin") {
-      await runDetailed("osascript", ["-e", "tell application \"ChatGPT\" to quit"], 15000);
-      for (let attempt = 0; attempt < 15 && await codexIsRunning(); attempt++)
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-    if (await codexIsRunning()) throw new Error("Codex 尚未完全退出，请关闭后重试");
+    await quitRunningCodex();
+  }
+  if (localized) {
+    const result = await launchLocalizedCodex(proxy);
+    return { ...result, warning: `${result.warning || ""} 请在 Codex 官方设置中确认 Computer Use 可用。`.trim() };
   }
   await launchCodex(proxy);
-  return { started: true, localized: false, warning: "请在 Codex 官方设置中开启 Computer Use；确认可用后可断开节点。" };
+  return { started: true, localized: false, warning: "请在 Codex 官方设置中确认 Computer Use 可用。" };
 }
 
 async function launchClaude(command) {
@@ -870,7 +892,8 @@ ipcMain.handle("node-connect", async () => {
   const session = await validSession();
   const runtime = getNodeRuntime();
   runtime.setPolicy(await getNodePolicy(session.token));
-  return runtime.connect();
+  const status = await runtime.connect();
+  return { ...status, codexRunning: await codexIsRunning() };
 });
 ipcMain.handle("node-disconnect", () => getNodeRuntime().disconnect());
 ipcMain.handle("launch-codex", async (_event, { localized, officialNetwork } = {}) => {
@@ -881,7 +904,7 @@ ipcMain.handle("launch-codex", async (_event, { localized, officialNetwork } = {
     const runtime = getNodeRuntime();
     runtime.setPolicy(await getNodePolicy(session.token));
     const status = await runtime.connect();
-    return launchProxiedCodex(`127.0.0.1:${status.port}`);
+    return launchProxiedCodex(`127.0.0.1:${status.port}`, localized !== false);
   }
   if (localized !== false) return launchLocalizedCodex();
   await launchCodex();

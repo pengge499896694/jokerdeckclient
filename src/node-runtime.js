@@ -3,7 +3,7 @@ const net = require("node:net");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { DEFAULT_SUBSCRIPTION_URL, subscriptionUrl, parseNodes, buildCoreConfig } = require("./node-subscription");
-const { checkLocalProxy } = require("./startup-proxy");
+const { checkLocalProxy, probeOfficialProxy } = require("./startup-proxy");
 
 async function freePort() {
   return new Promise((resolve, reject) => {
@@ -25,14 +25,16 @@ function corePath(root, packaged, platform = process.platform, arch = process.ar
 }
 
 class NodeRuntime {
-  constructor({ root, packaged, userData, policy = {} }) {
+  constructor({ root, packaged, userData, policy = {}, fetchImpl = fetch }) {
     this.root = root;
     this.packaged = packaged;
     this.userData = userData;
     this.policy = policy;
+    this.fetchImpl = fetchImpl;
     this.child = null;
     this.port = 0;
     this.nodes = 0;
+    this.officialReachable = false;
   }
 
   status() {
@@ -40,6 +42,7 @@ class NodeRuntime {
       connected: Boolean(this.child && this.child.exitCode === null && this.child.signalCode === null && !this.child.killed),
       port: this.port,
       nodes: this.nodes,
+      officialReachable: this.officialReachable,
     };
   }
 
@@ -50,11 +53,20 @@ class NodeRuntime {
 
   async connect() {
     if (this.policy.enabled === false) throw new Error("节点服务已由管理员暂停");
-    if (this.status().connected) return this.status();
+    if (this.status().connected) {
+      try {
+        await probeOfficialProxy(`127.0.0.1:${this.port}`, 10000);
+        this.officialReachable = true;
+        return this.status();
+      } catch (error) {
+        this.officialReachable = false;
+        throw error;
+      }
+    }
     const executable = corePath(this.root, this.packaged);
     await fs.access(executable).catch(() => { throw new Error("节点内核缺失，请重新安装客户端"); });
     const url = subscriptionUrl(this.policy.subscriptionUrl || DEFAULT_SUBSCRIPTION_URL);
-    const response = await fetch(url, { signal: AbortSignal.timeout(15000), redirect: "follow" });
+    const response = await this.fetchImpl(url, { signal: AbortSignal.timeout(15000), redirect: "follow" });
     if (!response.ok) throw new Error(`节点订阅读取失败（${response.status}）`);
     if (new URL(response.url).protocol !== "https:") throw new Error("节点订阅发生了非 HTTPS 跳转");
     const source = await response.text();
@@ -87,6 +99,8 @@ class NodeRuntime {
         if (spawnError || child.exitCode !== null || child.signalCode !== null) break;
         try {
           await checkLocalProxy(`127.0.0.1:${port}`, 3000);
+          await probeOfficialProxy(`127.0.0.1:${port}`, 10000);
+          this.officialReachable = true;
           return this.status();
         } catch (error) {
           lastError = error;
@@ -105,6 +119,7 @@ class NodeRuntime {
     this.child = null;
     this.port = 0;
     this.nodes = 0;
+    this.officialReachable = false;
     return this.status();
   }
 }

@@ -28,6 +28,15 @@ jobs:
         run: test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
       - run: npm ci
       - run: npm test
+      - name: Build proxy-aware localization helper
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            npm run localization:mac
+          else
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File third_party/codex-desktop-zh/build.ps1
+            cp third_party/codex-desktop-zh/dist/Codex-Zh-Launcher-Windows-x64.exe vendor/win/Codex-Zh-Launcher.exe
+          fi
       - name: Fetch and verify Mihomo core
         shell: bash
         run: ${{ matrix.core }}

@@ -2,4 +2,8 @@ node_modules/
 release/
 vendor/core/
 dist/
+third_party/codex-desktop-zh/macos/.build/
+third_party/codex-desktop-zh/macos/.artifacts/
+third_party/codex-desktop-zh/dist/
+third_party/codex-desktop-zh/obj/
 .DS_Store

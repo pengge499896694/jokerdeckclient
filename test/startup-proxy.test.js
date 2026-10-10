@@ -6,6 +6,7 @@ const {
   systemProxySuggestion,
   proxyServerArgument,
   checkLocalProxy,
+  probeOfficialProxy,
 } = require("../src/startup-proxy");
 
 test("accepts only loopback HTTP proxies with an explicit port", () => {
@@ -41,4 +42,13 @@ test("rejects a proxy that refuses CONNECT", async (context) => {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => server.close());
   await assert.rejects(checkLocalProxy(`127.0.0.1:${server.address().port}`), /407/);
+});
+
+test("does not treat a CONNECT response as proof that the official site is reachable", async (context) => {
+  const server = net.createServer((socket) => {
+    socket.once("data", () => socket.end("HTTP/1.1 200 Connection established\r\n\r\n"));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  await assert.rejects(probeOfficialProxy(`127.0.0.1:${server.address().port}`, 1000));
 });

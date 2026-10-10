@@ -37,6 +37,7 @@ test("filters disabled and unapproved regions; does not import subscription rule
   assert.equal(config["external-controller"], undefined);
   assert.equal(config["bind-address"], "127.0.0.1");
   assert.equal(config["proxy-groups"][0].type, "url-test");
+  assert.equal(config["proxy-groups"][0].url, "https://chatgpt.com/cdn-cgi/trace");
 });
 
 test("pinning a node fails closed when it is unavailable", () => {

@@ -90,7 +90,7 @@ function renderNodeStatus() {
   status.classList.toggle("hidden", currentTool() !== "codex");
   $("node-note").classList.toggle("hidden", currentTool() !== "codex" || !state.integrations.officialNetwork);
   status.textContent = state.nodeStatus.connected
-    ? `节点已连接 · ${state.nodeStatus.nodes} 个候选 · 本机端口 ${state.nodeStatus.port}`
+    ? `${state.nodeStatus.officialReachable ? "官方站点已连通" : "本机代理已启动"} · ${state.nodeStatus.nodes} 个候选 · 本机端口 ${state.nodeStatus.port}`
     : "节点未连接";
   $("official-network-setting").checked = Boolean(state.integrations.officialNetwork);
 }
@@ -168,9 +168,25 @@ $("official-network-setting").addEventListener("change", async () => {
     if (enabled) {
       state.nodeStatus = await window.jokerdeck.nodeConnect();
       state.integrations = await window.jokerdeck.setIntegrations({ officialNetwork: true });
+      if (state.nodeStatus.codexRunning) {
+        try {
+          const result = await window.jokerdeck.launchCodex({
+            localized: state.integrations.localization !== false,
+            officialNetwork: true,
+          });
+          $("integration-status").textContent = result?.cancelled
+            ? "节点已就绪；Codex 尚未重启接入节点。"
+            : result?.warning || "Codex 已通过节点启动。";
+        } catch (error) {
+          $("integration-status").textContent = `节点已就绪；Codex 重启失败：${errorText(error)}`;
+        }
+      } else {
+        $("integration-status").textContent = "节点已就绪；启动 Codex 后生效。";
+      }
     } else {
       state.integrations = await window.jokerdeck.setIntegrations({ officialNetwork: false });
       state.nodeStatus = await window.jokerdeck.nodeDisconnect();
+      $("integration-status").textContent = "节点已断开；当前 Codex 可能需要重启才能继续联网。";
     }
   } catch (error) {
     if (enabled) {
