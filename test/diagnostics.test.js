@@ -29,8 +29,10 @@ test("creates a salted scrypt password record with the default password", () => 
   assert.equal(typeof record.salt, "string");
   assert.equal(typeof record.hash, "string");
   assert.equal(auth.includes("123456"), false);
-  assert.equal((await fs.stat(diagnostics.authPath)).mode & 0o777, 0o600);
-  assert.equal((await fs.stat(directory)).mode & 0o777, 0o700);
+  if (process.platform !== "win32") {
+    assert.equal((await fs.stat(diagnostics.authPath)).mode & 0o777, 0o600);
+    assert.equal((await fs.stat(directory)).mode & 0o777, 0o700);
+  }
 }));
 
 test("appends startup diagnostics before any password verification", () => withDirectory(async (directory) => {
@@ -80,7 +82,8 @@ test("bounds persisted entries and keeps the log private", () => withDirectory(a
   const entries = await diagnostics.entries();
   assert.equal(entries.length, 2);
   assert.deepEqual(entries.map(({ event }) => event), ["route", "key"]);
-  assert.equal((await fs.stat(diagnostics.logPath)).mode & 0o777, 0o600);
+  if (process.platform !== "win32")
+    assert.equal((await fs.stat(diagnostics.logPath)).mode & 0o777, 0o600);
 
   const persisted = JSON.parse(await fs.readFile(diagnostics.logPath, "utf8"));
   assert.equal(persisted.length, 2);
