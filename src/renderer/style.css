@@ -461,6 +461,20 @@ input:focus {
   margin-top: 14px;
   padding-top: 8px;
 }
+
+.node-delay-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  margin: 2px 0 4px;
+  font-size: 11px;
+}
+.node-delay {
+  display: inline-block;
+  color: #5b6b6e;
+}
+.node-delay.good { color: #147d72; }
+.node-delay.bad { color: #a34e4e; }
 .setting-choice {
   display: flex;
   align-items: center;

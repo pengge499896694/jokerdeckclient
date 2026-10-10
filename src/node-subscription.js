@@ -7,7 +7,12 @@ const SUPPORTED_COUNTRIES = new Set([
 const PROXY_TYPES = new Set(["http", "socks5", "ss", "vmess", "vless", "trojan", "hysteria2", "tuic"]);
 
 function subscriptionUrl(value) {
-  const url = new URL(value || DEFAULT_SUBSCRIPTION_URL);
+  let url;
+  try {
+    url = new URL(value || DEFAULT_SUBSCRIPTION_URL);
+  } catch {
+    throw new Error("节点订阅地址无效，必须填写完整的 HTTPS URL");
+  }
   if (url.protocol !== "https:" || url.username || url.password || url.hash)
     throw new Error("节点订阅必须是无账号信息的 HTTPS 地址");
   return url.href;
@@ -16,9 +21,10 @@ function subscriptionUrl(value) {
 function normalizeNodePolicy(raw = {}) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
     throw new Error("节点策略格式无效");
+  const subscription = raw.subscription_url ?? raw.subscriptionUrl ?? raw.url;
   return {
     enabled: raw.enabled !== false,
-    subscriptionUrl: subscriptionUrl(raw.subscription_url),
+    subscriptionUrl: subscriptionUrl(subscription),
     disabledNodes: Array.isArray(raw.disabled_nodes)
       ? raw.disabled_nodes.filter((name) => typeof name === "string" && name.length <= 120)
       : [],
@@ -46,7 +52,7 @@ function parseNodes(source, { disabled = [], countryCodes = SUPPORTED_COUNTRIES 
   });
 }
 
-function buildCoreConfig(nodes, port, pinnedNode = "") {
+function buildCoreConfig(nodes, port, pinnedNode = "", controllerPort = 0) {
   if (!nodes.length) throw new Error("订阅中没有可用的候选节点");
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("本机代理端口无效");
   if (pinnedNode && !nodes.some((node) => node.name === pinnedNode))
@@ -54,6 +60,9 @@ function buildCoreConfig(nodes, port, pinnedNode = "") {
   const selected = pinnedNode ? nodes.filter((node) => node.name === pinnedNode) : nodes;
   const config = {
     "mixed-port": port,
+    ...(Number.isInteger(controllerPort) && controllerPort >= 1024 && controllerPort <= 65535
+      ? { "external-controller": `127.0.0.1:${controllerPort}` }
+      : {}),
     "allow-lan": false,
     "bind-address": "127.0.0.1",
     mode: "rule",
@@ -62,9 +71,8 @@ function buildCoreConfig(nodes, port, pinnedNode = "") {
     proxies: selected,
     "proxy-groups": [{
       name: "JOKERDECK",
-      type: pinnedNode ? "select" : "url-test",
+      type: "select",
       proxies: selected.map((node) => node.name),
-      ...(!pinnedNode ? { url: "https://chatgpt.com/cdn-cgi/trace", interval: 180, tolerance: 50 } : {}),
     }],
     rules: ["MATCH,JOKERDECK"],
   };

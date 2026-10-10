@@ -32,7 +32,7 @@ macOS 对外分发建议另设 `MAC_CERTIFICATE_P12`、`MAC_CERTIFICATE_PASSWORD
 
 ## 官方 Computer Use 节点
 
-客户端的“官方 Computer Use 节点”开关从 HTTPS 订阅读取候选节点，启动独立的本机 Mihomo 代理，只绑定 `127.0.0.1`。客户端验证代理能够访问 ChatGPT 后，使用带代理参数的中文启动器或原版启动器启动 Codex。Codex 的官方登录缓存由官方客户端管理，Switch 只写入中转模型提供方配置，不修改或清除官方登录。使用者仍需在 Codex 官方设置中开启 Computer Use，并自行确认账号可用。关闭开关只停止本次由客户端启动的代理，不修改系统代理；此时仍在运行的 Codex 若要继续联网，需要以普通模式重新启动。
+客户端的“官方 Computer Use 节点”开关从 HTTPS 订阅读取候选节点，逐个测试到 ChatGPT 的延迟，选择最低延迟的候选，并启动只绑定 `127.0.0.1` 的本机 Mihomo 代理。官方模式不会写入中转 `model_provider`，而是使用带代理参数的中文启动器或原版启动器启动官方 Codex，保留官方登录、原生插件和 Computer Use 配置。使用者仍需在 Codex 官方设置中开启 Computer Use，并自行确认账号可用。关闭开关只停止本次由客户端启动的代理，不修改系统代理；此时仍在运行的 Codex 若要继续联网，需要以普通模式重新启动。
 
 客户端登录后请求 `GET /api/v1/client/node-policy`，使用现有 Bearer token。服务端接口尚未部署时节点功能不可用。服务端按登录用户返回如下 `data` 对象，超管操作由服务端鉴权并持久化：
 

@@ -9,7 +9,7 @@ const state = {
   update: null,
   integrations: { localization: true, computerUse: {} },
   capabilities: null,
-  nodeStatus: { connected: false, port: 0, nodes: 0 },
+  nodeStatus: { connected: false, port: 0, nodes: 0, latencies: [] },
 };
 const currentTool = () => (state.category === "anthropic" ? "claude" : "codex");
 const currentAppName = () =>
@@ -87,18 +87,25 @@ function renderCapabilities(data) {
 }
 function renderNodeStatus() {
   const status = $("node-status");
+  const delayList = $("node-delays");
   status.classList.toggle("hidden", currentTool() !== "codex");
   $("node-note").classList.toggle("hidden", currentTool() !== "codex" || !state.integrations.officialNetwork);
   status.textContent = state.nodeStatus.connected
-    ? `${state.nodeStatus.officialReachable ? "官方站点已连通" : "本机代理已启动"} · ${state.nodeStatus.nodes} 个候选 · 本机端口 ${state.nodeStatus.port}`
+    ? `${state.nodeStatus.officialReachable ? "官方站点已连通" : "本机代理已启动"} · 当前 ${escapeHtml(state.nodeStatus.selectedNode || "自动选择")} ${state.nodeStatus.selectedLatency == null ? "" : `${state.nodeStatus.selectedLatency} ms`} · ${state.nodeStatus.nodes} 个候选`
     : "节点未连接";
+  const latencies = Array.isArray(state.nodeStatus.latencies) ? state.nodeStatus.latencies : [];
+  delayList.classList.toggle("hidden", currentTool() !== "codex" || !latencies.length);
+  delayList.innerHTML = latencies.map((entry) =>
+    `<span class="node-delay ${entry.ok ? "good" : "bad"}">${escapeHtml(entry.name)} · ${entry.ok ? `${entry.latency} ms` : "不可用"}</span>`,
+  ).join("");
   $("official-network-setting").checked = Boolean(state.integrations.officialNetwork);
 }
 function updateSummary() {
+  const officialNetwork = currentTool() === "codex" && Boolean(state.integrations.officialNetwork);
   $("selection-summary").textContent = state.selectedGroup
     ? `${state.selectedGroup.name} · ${state.selectedEndpoint?.name || "线路自动选择"}`
-    : "请选择一个分组";
-  $("launch").disabled = !state.selectedGroup;
+    : officialNetwork ? "官方 Codex · 保留原生登录和插件" : "请选择一个分组";
+  $("launch").disabled = !state.selectedGroup && !officialNetwork;
   $("launch").innerHTML = `配置并启动 ${currentAppName()} <span>→</span>`;
 }
 function setCategory(category) {
@@ -391,24 +398,31 @@ $("launch").addEventListener("click", async () => {
     if (!capabilities[tool].installed)
       throw new Error(`未检测到 ${currentAppName()}，请先安装官方客户端`);
     await chooseFastestEndpoint();
-    let apiKey = await window.jokerdeck.configuredKey({
-      groupId: state.selectedGroup.id,
-      tool,
-    });
-    if (!apiKey) {
-      const key = await window.jokerdeck.createKey({
+    const officialNetwork = tool === "codex" && Boolean(state.integrations.officialNetwork);
+    if (!state.selectedGroup && !officialNetwork)
+      throw new Error("请先选择一个分组");
+    let apiKey = "";
+    if (!officialNetwork) {
+      apiKey = await window.jokerdeck.configuredKey({
         groupId: state.selectedGroup.id,
-        name: `jokerdeck-client-${state.selectedGroup.id}`,
+        tool,
       });
-      apiKey = key.key || key.api_key || key.token || key.custom_key;
+      if (!apiKey) {
+        const key = await window.jokerdeck.createKey({
+          groupId: state.selectedGroup.id,
+          name: `jokerdeck-client-${state.selectedGroup.id}`,
+        });
+        apiKey = key.key || key.api_key || key.token || key.custom_key;
+      }
+      if (!apiKey) throw new Error("服务端未返回新密钥，请到 API 密钥页确认");
     }
-    if (!apiKey) throw new Error("服务端未返回新密钥，请到 API 密钥页确认");
     await window.jokerdeck.savePreferences({
       selectedGroup: state.selectedGroup,
       selectedEndpoint: state.selectedEndpoint,
       category: state.category,
       tool,
       apiKey,
+      officialNetwork,
     });
     const launchResult = tool === "claude"
       ? await window.jokerdeck.launchClaude()
@@ -422,7 +436,7 @@ $("launch").addEventListener("click", async () => {
       return;
     }
     $("success-text").textContent =
-      `${state.selectedGroup.name} 已写入本机配置，正在打开 ${currentAppName()}。${launchResult?.warning || ""}`;
+      `${state.selectedGroup?.name || "官方 Codex"} 已保存，正在打开 ${currentAppName()}。${launchResult?.warning || ""}`;
     $("success-view").querySelector("h1").textContent =
       `${currentAppName()} 正在启动`;
     $("launch-again").innerHTML = `再次启动 ${currentAppName()} <span>→</span>`;

@@ -17,6 +17,7 @@ test("accepts HTTPS subscriptions without embedded credentials", () => {
   assert.equal(subscriptionUrl(), "https://234.qzz.io/fsllistyaml");
   assert.throws(() => subscriptionUrl("http://example.org/list"));
   assert.throws(() => subscriptionUrl("https://user:pass@example.org/list"));
+  assert.throws(() => subscriptionUrl("not-a-url"), /HTTPS URL/);
 });
 
 test("normalizes server node policy", () => {
@@ -27,6 +28,7 @@ test("normalizes server node policy", () => {
     pinnedNode: "JP-Fast",
   });
   assert.throws(() => normalizeNodePolicy({ subscription_url: "http://example.org/list" }));
+  assert.equal(normalizeNodePolicy({ subscriptionUrl: "https://example.org/list" }).subscriptionUrl, "https://example.org/list");
 });
 
 test("filters disabled and unapproved regions; does not import subscription rules", () => {
@@ -36,8 +38,9 @@ test("filters disabled and unapproved regions; does not import subscription rule
   assert.deepEqual(config.rules, ["MATCH,JOKERDECK"]);
   assert.equal(config["external-controller"], undefined);
   assert.equal(config["bind-address"], "127.0.0.1");
-  assert.equal(config["proxy-groups"][0].type, "url-test");
-  assert.equal(config["proxy-groups"][0].url, "https://chatgpt.com/cdn-cgi/trace");
+  assert.equal(config["proxy-groups"][0].type, "select");
+  assert.equal(config["proxy-groups"][0].url, undefined);
+  assert.equal(YAML.parse(buildCoreConfig(nodes, 19077, "", 19078))["external-controller"], "127.0.0.1:19078");
 });
 
 test("pinning a node fails closed when it is unavailable", () => {

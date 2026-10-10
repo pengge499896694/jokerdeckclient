@@ -556,12 +556,50 @@ async function updateCodexConfig({ endpoint, apiKey }) {
   else config = `model_provider = "custom"\n${config}`;
   await fs.mkdir(home, { recursive: true });
   try {
+    const officialBackup = `${configPath}.jokerdeck.official.bak`;
+    if (await fileExists(configPath) && !(await fileExists(officialBackup)))
+      await fs.copyFile(configPath, officialBackup, { mode: 0o600 });
     await fs.copyFile(configPath, `${configPath}.jokerdeck.bak`);
   } catch {}
   const temporaryPath = `${configPath}.jokerdeck.tmp`;
   await fs.writeFile(temporaryPath, config, { mode: 0o600 });
   await fs.rename(temporaryPath, configPath);
   return configPath;
+}
+
+async function restoreOfficialCodexConfig() {
+  const home = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const configPath = path.join(home, "config.toml");
+  const officialBackupPath = `${configPath}.jokerdeck.official.bak`;
+  const current = await fs.readFile(configPath, "utf8").catch(() => "");
+  const looksLikeJokerProvider = (value) =>
+    /experimental_bearer_token\s*=/.test(value) && /jokerdeck/i.test(value);
+  let backup = "";
+  if (await fileExists(officialBackupPath)) {
+    backup = await fs.readFile(officialBackupPath, "utf8");
+  } else if (await fileExists(`${configPath}.jokerdeck.bak`)) {
+    const legacyBackup = await fs.readFile(`${configPath}.jokerdeck.bak`, "utf8");
+    backup = looksLikeJokerProvider(legacyBackup) ? "" : legacyBackup;
+  }
+  if (!backup && !looksLikeJokerProvider(current)) return false;
+  if (!backup) {
+    const header = "[model_providers.custom]";
+    const headerIndex = current.indexOf(header);
+    if (headerIndex < 0) return false;
+    const afterHeader = current.slice(headerIndex + header.length);
+    const nextHeader = afterHeader.search(/\n\[[^\n]+\]/);
+    const blockEnd = nextHeader >= 0
+      ? headerIndex + header.length + nextHeader
+      : current.length;
+    backup = `${current.slice(0, headerIndex)}${current.slice(blockEnd)}`
+      .replace(/^model_provider\s*=\s*["']custom["']\s*$/m, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trimStart();
+  }
+  const temporaryPath = `${configPath}.jokerdeck.official.tmp`;
+  await fs.writeFile(temporaryPath, backup, { mode: 0o600 });
+  await fs.rename(temporaryPath, configPath);
+  return true;
 }
 
 async function readConfiguredKey() {
@@ -830,18 +868,20 @@ ipcMain.handle("save-preferences", async (_event, preferences) => {
   if (session.integrations?.computerUse?.[tool]) await configureComputerUse(tool, true);
   if (tool === "claude")
     await updateClaudeConfig({ endpoint, apiKey: preferences.apiKey });
+  else if (preferences.officialNetwork) await restoreOfficialCodexConfig();
   else await updateCodexConfig({ endpoint, apiKey: preferences.apiKey });
   await writeSession({
     ...session,
-    selectedGroups: {
-      ...(session.selectedGroups || {}),
-      [preferences.category]: preferences.selectedGroup,
-    },
+    selectedGroups: preferences.selectedGroup
+      ? {
+          ...(session.selectedGroups || {}),
+          [preferences.category]: preferences.selectedGroup,
+        }
+      : session.selectedGroups || {},
     selectedEndpoint: preferences.selectedEndpoint,
-    keyGroupIds: {
-      ...(session.keyGroupIds || {}),
-      [tool]: preferences.selectedGroup.id,
-    },
+    keyGroupIds: preferences.selectedGroup
+      ? { ...(session.keyGroupIds || {}), [tool]: preferences.selectedGroup.id }
+      : session.keyGroupIds || {},
     setupDone: true,
   });
   return true;

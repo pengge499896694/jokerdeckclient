@@ -81,7 +81,7 @@
             <div>
               <p class="eyebrow">配置中心</p>
               <h1>选择你的工作分组</h1>
-              <p>选择后会为本机创建专用 API Key，并保存下次启动习惯。</p>
+              <p>官方模式保留 Codex 原生登录和插件；中转模式才会创建专用 API Key。</p>
             </div>
             <button id="refresh" class="icon-button" title="刷新数据">↻</button>
           </div>
@@ -141,7 +141,8 @@
                   <label id="localization-option" class="setting-choice"><span>中文启动 Codex</span><input id="localization-setting" type="checkbox" checked /></label>
                   <label id="official-network-option" class="setting-choice"><span>官方 Computer Use 节点</span><input id="official-network-setting" type="checkbox" /></label>
                   <p id="node-status" class="muted integration-status hidden"></p>
-                  <p id="node-note" class="muted integration-status hidden">启动 Codex 时使用本机代理；官方插件需在 Codex 设置中确认可用。</p>
+                  <div id="node-delays" class="node-delay-list hidden" aria-live="polite"></div>
+                  <p id="node-note" class="muted integration-status hidden">官方 Codex 保留原生登录和插件配置，只通过本机代理连接官方服务。</p>
                   <label class="setting-choice"><span>本地桌面控制 MCP</span><input id="computer-use-setting" type="checkbox" /></label>
                   <p class="muted integration-status">此开关配置独立的本地 MCP。官方 Computer Use 的可用性由 ChatGPT 账号、组织和地区决定，请以官方设置为准。</p>
                   <button id="computer-use-permissions" class="secondary wide hidden">检查桌面权限</button>
@@ -170,7 +171,7 @@
         </section>
       </main>
       <footer>
-        <span>jokerdeck switch · <span id="app-version">v0.3.6</span></span>
+        <span>jokerdeck switch · <span id="app-version">v0.3.7</span></span>
         <div class="footer-actions"><button id="check-update" class="text-button">检查更新</button><button id="site-link" class="text-button">打开中转站</button></div>
       </footer>
     </div>
